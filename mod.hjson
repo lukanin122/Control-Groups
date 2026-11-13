@@ -1,0 +1,16 @@
+name: "ControlGroups"
+
+displayName: "Control Groups"
+
+author: "[#666999[]]Name[#CC0000[]]less[#FFFF00[]]Ways"
+
+version: "1.0.0"
+
+minGameVersion: "160.7"
+
+hidden: true
+
+description:
+  '''
+Control Groups
+  '''
