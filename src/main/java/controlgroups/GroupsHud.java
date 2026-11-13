@@ -6,6 +6,7 @@ import arc.graphics.g2d.Draw;
 import arc.graphics.g2d.Fill;
 import arc.graphics.g2d.Font;
 import arc.graphics.g2d.Lines;
+import arc.graphics.g2d.TextureRegion;
 import arc.input.KeyCode;
 import arc.math.Mathf;
 import arc.math.geom.Rect;
@@ -37,6 +38,8 @@ public final class GroupsHud extends Element {
     public final GroupModel model;
     public final HudLayout layout;
     private final UnitProjection projection = new UnitProjection();
+    private final TextureRegion settingsIcon = Icon.settings.getRegion();
+    private final TextureRegion[] activityIcons = new TextureRegion[Activity.values().length];
     private final IntFunction<Unit> resolve = id -> Groups.unit.getByID(id);
     private final Vec2 pointer = new Vec2(), camera = new Vec2();
     private final Seq<Unit> selection = new Seq<>();
@@ -45,6 +48,7 @@ public final class GroupsHud extends Element {
     private InputHandler handler;
     private Team team;
     private boolean wasActive, dirty = true;
+    private final long clockOrigin = System.nanoTime();
     public boolean editing;
     private double now, membershipAt, stateAt, lastClickAt;
     private int settingsRevision = -1, profileRevision = -1, modelRevision = -1;
@@ -61,6 +65,17 @@ public final class GroupsHud extends Element {
         profiles = new UnitProfiles(Core.settings, Vars.content.units());
         model = new GroupModel(profiles, Vars.content.units());
         layout = new HudLayout(model);
+        for (Activity activity : Activity.values()) {
+            if (activity.icon == null) continue;
+            var icon = Icon.icons.get(activity.icon);
+            TextureRegion region = icon == null ? null : icon.getRegion();
+            if (activity == Activity.MOVE && region == null) {
+                region = Core.atlas.find("block-omega-mech-pad-ui");
+                // The legacy glyph constant survives in 160.7, but its texture is absent in the desktop atlas.
+                if (!region.found()) region = Icon.left.getRegion();
+            }
+            activityIcons[activity.ordinal()] = region != null && region.found() ? region : Icon.cancel.getRegion();
+        }
         editorPanel = new HudEditor(this);
         unitPanel = new UnitSettingsPanel(this);
         addListener(new InputListener() {
@@ -107,11 +122,10 @@ public final class GroupsHud extends Element {
         editorPanel.visible = unitPanel.visible = false;
     }
 
+    /** Arc calls this even for hidden children; hidden actors do not receive act(). */
     @Override
-    public void act(float delta) {
-        super.act(delta);
-        this.delta = Math.min(Math.max(delta, 0f), 0.1f);
-        now += Math.max(delta, 0);
+    public void updateVisibility() {
+        now = clockSeconds();
         InputHandler current = Vars.control == null ? null : Vars.control.input;
         Team currentTeam = Vars.player == null ? null : Vars.player.team();
         if (handler != current || team != currentTeam) {
@@ -127,8 +141,17 @@ public final class GroupsHud extends Element {
                 Core.scene.unfocus(editorPanel); Core.scene.unfocus(unitPanel);
             }
             wasActive = false;
-            return;
         }
+    }
+
+    @Override
+    public void act(float delta) {
+        super.act(delta);
+        this.delta = Math.min(Math.max(delta, 0f), 0.1f);
+        if (!visible || handler == null || team == null) return;
+        now = clockSeconds();
+        InputHandler current = handler;
+        Team currentTeam = team;
         if (!wasActive) { membershipAt = stateAt = 0; dirty = true; }
         wasActive = true;
         if (settingsRevision != settings.revision || profileRevision != profiles.revision) {
@@ -192,7 +215,7 @@ public final class GroupsHud extends Element {
                 Lines.rect(x, y, width, height);
             }
             panel(layout.zero, editing ? EDITOR_COLOR : Color.gray, 1f);
-            icon("settings", x + layout.zero.x + layout.zero.width / 2f, y + layout.zero.y + layout.zero.height / 2f, 24f * layout.scale, 0, Color.white, 1f);
+            icon(settingsIcon, x + layout.zero.x + layout.zero.width / 2f, y + layout.zero.y + layout.zero.height / 2f, 24f * layout.scale, 0, Color.white, 1f);
             for (int i = 0; i < layout.orderCount; i++) {
                 HudLayout.Box box = layout.boxes[layout.order[i]];
                 if (editing) {
@@ -260,7 +283,7 @@ public final class GroupsHud extends Element {
             Fill.rect(cx, cy, size + 2 * layout.scale, size + 2 * layout.scale);
             float rotation = box.group.activity == Activity.MOVE ? directionAngle() - 180f :
                 box.group.activity == Activity.PURSUE ? directionAngle() - 90f : 0;
-            icon(box.group.activity.icon, cx, cy, size, rotation, border, alpha);
+            icon(activityIcons[box.group.activity.ordinal()], cx, cy, size, rotation, border, alpha);
         }
     }
 
@@ -270,7 +293,7 @@ public final class GroupsHud extends Element {
 
     private void drawCell(HudLayout.Cell cell, float alpha) {
         var region = cell.bucket.profile.unit.uiIcon;
-        if (region == null) return;
+        if (region == null || region.texture == null || region.width <= 0 || region.height <= 0) return;
         float iconSize = Math.min(24f * layout.scale, Math.min(cell.rect.height, cell.rect.width));
         float cx = x + cell.rect.x + cell.rect.width - iconSize / 2f;
         float cy = y + cell.rect.y + cell.rect.height / 2;
@@ -289,10 +312,9 @@ public final class GroupsHud extends Element {
         Lines.rect(x + rect.x, y + rect.y, rect.width, rect.height);
     }
 
-    static void icon(String name, float x, float y, float size, float rotation, Color color, float alpha) {
-        var drawable = Icon.icons.get(name, Icon.cancel);
+    private static void icon(TextureRegion region, float x, float y, float size, float rotation, Color color, float alpha) {
         Draw.color(color, alpha);
-        Draw.rect(drawable.getRegion(), x, y, size, size, rotation);
+        Draw.rect(region, x, y, size, size, rotation);
     }
 
     private static void text(String value, float x, float y, Color color, float scale, int align, float alpha) {
@@ -303,6 +325,7 @@ public final class GroupsHud extends Element {
         try {
             font.setColor(color.r, color.g, color.b, alpha);
             font.getData().setScale(scale);
+            if ((align & Align.top) == 0) y += font.getCapHeight() / 2f;
             font.draw(value, x, y, 0, align, false);
         } finally {
             font.setColor(oldR, oldG, oldB, oldA); font.getData().setScale(oldX, oldY);
@@ -429,8 +452,16 @@ public final class GroupsHud extends Element {
         return result;
     }
 
+    boolean onEditorEdge(float px, float py) {
+        return editing && edges(px, py) != 0;
+    }
+
     public void damage(Unit unit) {
-        model.damage(unit, now, settings.damageTicks);
+        model.damage(unit, clockSeconds(), settings.damageTicks);
+    }
+
+    private double clockSeconds() {
+        return (System.nanoTime() - clockOrigin) / 1_000_000_000.0;
     }
 
     public void reset() {
@@ -439,6 +470,7 @@ public final class GroupsHud extends Element {
         pressedGroup = -1; lastClickKey = Long.MIN_VALUE;
         membershipAt = stateAt = 0; dirty = true;
         unitPanel.open = false;
+        editing = false; editorPanel.visible = unitPanel.visible = false;
         Core.scene.unfocus(editorPanel); Core.scene.unfocus(unitPanel);
     }
 

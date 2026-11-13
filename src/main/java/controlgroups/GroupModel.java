@@ -230,13 +230,13 @@ public final class GroupModel {
                 if (mount.target instanceof Healthc health && health.isValid() && health.damaged() &&
                     mount.target.team() == unit.team && mount.shoot &&
                     (mount instanceof HealBeamMount heal ? heal.strength > 0.01f :
-                        shot || (mount.bullet != null && mount.bullet.isAdded()))) observation.repairUntil = now + 0.3;
+                        shot || (mount.bullet != null && mount.bullet.isAdded()))) observation.repairUntil = now + UpdatePolicy.ACTION_HOLD_SECONDS;
             } else if (!mount.weapon.noAttack) {
                 if (shot) fired = true;
                 if (mount.bullet != null && mount.bullet.isAdded() && mount.shoot) continuous = true;
             }
         }
-        if (fired) observation.firingUntil = now + 0.3;
+        if (fired) observation.firingUntil = now + UpdatePolicy.ACTION_HOLD_SECONDS;
         boolean attack = continuous || now < observation.firingUntil;
         boolean damage = now < observation.damageUntil;
         if (damage) return attack ? Activity.COMBAT : Activity.DAMAGED;

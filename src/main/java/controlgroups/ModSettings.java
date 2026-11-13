@@ -38,7 +38,7 @@ public final class ModSettings {
         absoluteX = number("absolute-x", 0f, 0f, 32768f);
         absoluteY = number("absolute-y", 0f, 0f, 32768f);
         baseSize = number("base", baseSize, 1f, 1024f);
-        compression = number("compression", compression, 0.001f, 1f);
+        compression = number("compression", compression, 0f, 1f);
         occupancy = number("occupancy", occupancy, 0.01f, 1f);
         maxProjection = number("max-projection", maxProjection, 0f, 2048f);
         zeroGap = number("zero-gap", zeroGap, 0f, 100f);

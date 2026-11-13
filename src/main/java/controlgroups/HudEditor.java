@@ -4,6 +4,8 @@ import arc.Core;
 import arc.input.KeyCode;
 import arc.scene.event.InputEvent;
 import arc.scene.event.InputListener;
+import arc.scene.Element;
+import arc.math.Mathf;
 import arc.scene.ui.ImageButton;
 import arc.scene.ui.Label;
 import arc.scene.ui.ScrollPane;
@@ -16,6 +18,7 @@ import static controlgroups.UiControls.*;
 
 /** One editor for the same HUD, not an alternate implementation of group drawing. */
 final class HudEditor extends Table {
+    private static final float MIN_PANEL_WIDTH = 320f;
     private final GroupsHud hud;
     private final Table toolbar = new Table();
     private ImageButton eye, collapse, direction;
@@ -37,7 +40,7 @@ final class HudEditor extends Table {
         UiControls.check(content, "advanced", s.advanced, value -> { s.advanced = value; hud.changed(); });
         UiControls.check(content, "motion", s.checkMotion, value -> { s.checkMotion = value; hud.changed(); });
         number(content, "base", s.baseSize, 1, 1024, value -> { s.baseSize = (float)value; hud.changed(); });
-        number(content, "compression", s.compression * 100, 0.1, 100, value -> { s.compression = (float)value / 100; hud.changed(); });
+        number(content, "compression", s.compression * 100, 0, 100, value -> { s.compression = (float)value / 100; hud.changed(); });
         number(content, "occupancy", s.occupancy * 100, 1, 100, value -> { s.occupancy = (float)value / 100; hud.changed(); });
         number(content, "max-projection", s.maxProjection, 0, 2048, value -> { s.maxProjection = (float)value; hud.changed(); });
         number(content, "zero-gap", s.zeroGap, 0, 100, value -> { s.zeroGap = (float)value; hud.changed(); });
@@ -45,9 +48,9 @@ final class HudEditor extends Table {
         number(content, "tier-gap", s.tierGap, 0, 100, value -> { s.tierGap = (float)value; hud.changed(); });
         number(content, "type-gap", s.typeGap, 0, 100, value -> { s.typeGap = (float)value; hud.changed(); });
         number(content, "damage-ticks", s.damageTicks, 0, 3600, value -> { s.damageTicks = (float)value; hud.changed(); });
-        content.add(text("editor-help")).colspan(2).wrap().width(208).pad(5).row();
+        content.add(text("editor-help")).colspan(2).wrap().width(216).pad(5).row();
         stats = new Label("");
-        content.add(stats).colspan(2).left().wrap().width(208).pad(5).row();
+        content.add(stats).colspan(2).left().wrap().width(216).pad(5).row();
         ScrollPane scroll = new ScrollPane(content);
         scroll.setScrollingDisabled(true, false);
         add(scroll).grow().pad(4);
@@ -56,36 +59,36 @@ final class HudEditor extends Table {
 
     void refreshToolbar() {
         toolbar.clearChildren();
-        int columns = hud.settings.vertical ? Math.max(1, (int)(hud.settings.breadth / 38)) :
+        int columns = hud.settings.vertical ? Math.max(1, (int)((Math.max(MIN_PANEL_WIDTH, hud.settings.breadth) - 48) / 36)) :
             Math.max(1, (int)Math.ceil(6f / Math.max(1, (int)(hud.settings.breadth / 38))));
         ImageButton move = button("move", "move", () -> {});
         move.addListener(new InputListener() {
             @Override
             public boolean touchDown(InputEvent event, float x, float y, int pointer, KeyCode button) {
                 if (pointer != 0 || button != KeyCode.mouseLeft) return false;
-                hud.beginMove(event.stageX, event.stageY); return true;
+                hud.beginMove(event.stageX, event.stageY); event.stop(); return true;
             }
 
             @Override
             public void touchDragged(InputEvent event, float x, float y, int pointer) {
-                hud.drag(event.stageX, event.stageY);
+                hud.drag(event.stageX, event.stageY); event.stop();
             }
 
             @Override
             public void touchUp(InputEvent event, float x, float y, int pointer, KeyCode button) {
-                hud.finishDrag();
+                hud.finishDrag(); event.stop();
             }
         });
         if (1 % columns == 0) toolbar.row();
         button("refresh", "rotate", hud::rotate);
         if (2 % columns == 0) toolbar.row();
-        direction = button(hud.settings.vertical ? "flip-y" : "flip-x", "reverse", () -> {
+        direction = button(hud.settings.vertical ? "flipY" : "flipX", "reverse", () -> {
             hud.settings.reverse = !hud.settings.reverse; hud.changed();
         });
         if (3 % columns == 0) toolbar.row();
         button("list", "units", hud::openUnits);
         if (4 % columns == 0) toolbar.row();
-        eye = button(hud.settings.projection ? "eye" : "eye-off", "projection", () -> {
+        eye = button(hud.settings.projection ? "eye" : "eyeOff", "projection", () -> {
             hud.settings.projection = !hud.settings.projection; hud.changed();
         });
         if (5 % columns == 0) toolbar.row();
@@ -96,6 +99,7 @@ final class HudEditor extends Table {
 
     private ImageButton button(String icon, String key, Runnable clicked) {
         ImageButton button = toolbar.button(GroupsHud.drawable(icon), Styles.emptyi, clicked).size(34).pad(1).get();
+        button.name = "cg.editor." + key;
         button.setStyle(new ImageButton.ImageButtonStyle(button.getStyle()));
         button.addListener(new Tooltip(t -> t.background(Tex.pane).add(text(key)).wrap().width(220).pad(6)));
         return button;
@@ -112,7 +116,19 @@ final class HudEditor extends Table {
             w -= start;
             if (!hud.settings.reverse) px += start;
         }
-        setBounds(px, py, Math.max(1, w), Math.max(1, h));
+        w = Math.min(Math.max(MIN_PANEL_WIDTH * hud.layout.scale, w), Core.scene.getWidth());
+        h = Math.min(Math.max(180f * hud.layout.scale, h), Core.scene.getHeight());
+        if (hud.layout.centerSide == HudLayout.Side.LEFT) px = hud.x + hud.getWidth() - margin - w;
+        if (hud.layout.centerSide == HudLayout.Side.BOTTOM) py = hud.y + hud.getHeight() - margin - h;
+        setBounds(Mathf.clamp(px, 0, Math.max(0, Core.scene.getWidth() - w)),
+            Mathf.clamp(py, 0, Math.max(0, Core.scene.getHeight() - h)), Math.max(1, w), Math.max(1, h));
+    }
+
+    @Override
+    public Element hit(float x, float y, boolean touchable) {
+        // Keep all four frame handles usable even when a narrow hotbar needs a wider editor panel.
+        if (hud.onEditorEdge(this.x + x - hud.x, this.y + y - hud.y)) return null;
+        return super.hit(x, y, touchable);
     }
 
     @Override
@@ -120,7 +136,7 @@ final class HudEditor extends Table {
         if (!visible) return;
         super.act(delta);
         if (eye == null) return;
-        eye.getStyle().imageUp = GroupsHud.drawable(hud.settings.projection ? "eye" : "eye-off");
+        eye.getStyle().imageUp = GroupsHud.drawable(hud.settings.projection ? "eye" : "eyeOff");
         // Each button owns a style copy; emptyi itself is shared by the game and other mods.
         direction.setChecked(hud.settings.reverse);
         eye.setChecked(hud.settings.projection);

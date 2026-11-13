@@ -312,5 +312,7 @@ public final class UnitProjection {
 
     private float px(float x) { return originX + (x - unitX) * scale; }
     private float py(float y) { return originY + (y - unitY) * scale; }
-    private static boolean found(TextureRegion region) { return region != null && region.found(); }
+    private static boolean found(TextureRegion region) {
+        return region != null && region.texture != null && region.width > 0 && region.height > 0 && region.found();
+    }
 }

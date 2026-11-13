@@ -3,11 +3,18 @@ package controlgroups;
 import arc.Core;
 import arc.files.Fi;
 import arc.graphics.g2d.Draw;
+import arc.graphics.g2d.GlyphLayout;
+import arc.graphics.g2d.Lines;
 import arc.input.KeyCode;
 import arc.math.geom.Rect;
 import arc.scene.Element;
+import arc.scene.Group;
 import arc.scene.event.InputEvent;
 import arc.scene.ui.Dialog;
+import arc.scene.ui.CheckBox;
+import arc.scene.ui.TextField;
+import arc.scene.ui.ScrollPane;
+import arc.math.geom.Vec2;
 import arc.struct.IntSeq;
 import arc.struct.Seq;
 import arc.util.ScreenUtils;
@@ -55,9 +62,10 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                     }
                 }
                 case 2 -> {
-                    screenshot("02-editor.png"); hud.openUnits(); stage++; frames = 0;
+                    verifyEditor(); screenshot("02-editor.png"); hud.openUnits(); stage++; frames = 0;
                 }
                 case 3 -> {
+                    verifyUnitFields();
                     screenshot("03-unit-settings.png");
                     hud.toggleEditor(); hud.settings.collapse = true; hud.changed(); stage++; frames = 0;
                 }
@@ -88,13 +96,23 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
     private void prepare() {
         Element actor = Core.scene.find("control-groups-hud");
         require(actor instanceof GroupsHud, "Mod did not attach the HUD");
+        require(!Vars.mods.hasContentErrors(), "A loaded mod reported content/script errors");
         hud = (GroupsHud)actor;
+        for (Activity activity : Activity.values()) {
+            if (activity.icon != null) require(mindustry.gen.Icon.icons.containsKey(activity.icon) ||
+                (activity == Activity.MOVE && mindustry.gen.Icon.left != null), "Missing activity icon: " + activity.icon);
+        }
+        for (String icon : new String[]{"flipX", "flipY", "eyeOff", "move", "settings", "list"}) {
+            require(mindustry.gen.Icon.icons.containsKey(icon), "Missing editor icon: " + icon);
+        }
         hud.settings.vertical = true; hud.settings.reverse = false; hud.settings.projection = true;
         hud.settings.collapse = false; hud.settings.xFraction = 0; hud.settings.yFraction = 0.5f;
         hud.settings.length = 640; hud.settings.breadth = 240; hud.settings.advanced = false;
         Core.settings.put("fpscap", 0);
         Core.settings.put("effects", false);
         Core.settings.put("commandmodehold", false);
+        Vars.logic.reset();
+        Vars.state.rules = new mindustry.game.Rules();
         Vars.world.loadGenerator(96, 96, tiles -> {
             tiles.fill();
             tiles.eachTile(tile -> tile.setFloor(Blocks.stone.asFloor()));
@@ -129,6 +147,11 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         require(hud.visible && !Vars.control.input.locked(), "HUD unavailable: visible=" + hud.visible +
             " command=" + Vars.control.input.commandMode + " game=" + Vars.state.isGame() +
             " shown=" + Vars.ui.hudfrag.shown() + " dialog=" + Core.scene.hasDialog());
+        long updates = hud.model.reconciliations;
+        Vars.control.input.commandMode = false; Core.scene.act(1f / 60f);
+        require(!hud.visible && hud.model.reconciliations == updates, "Hidden HUD kept scanning units");
+        Vars.control.input.commandMode = true; Core.scene.act(1f / 60f);
+        require(hud.visible && hud.model.reconciliations > updates, "HUD did not resume after command mode was restored");
         Rect group = hud.layout.boxes[0].shown;
         Core.camera.position.set(300, 300);
         click(group.x + 1, group.y + 1);
@@ -148,16 +171,84 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
             Vars.control.input.selectedUnits.first() == hud.model.groups[0].representative.unit, "Projection click selected wrong unit");
         require(hud.hit(-10, -10, true) == null, "HUD intercepted input outside its controls");
         float color = Draw.getColorPacked(), mix = Draw.getMixColorPacked();
+        float stroke = Lines.getStroke(), xs = Draw.xscl, ys = Draw.yscl, z = Draw.z();
+        var blend = Draw.getBlend(); var shader = Draw.getShader();
+        float[] transform = Draw.trans().val.clone(), projectionMatrix = Draw.proj().val.clone();
         hud.draw();
         require(Draw.getColorPacked() == color && Draw.getMixColorPacked() == mix, "HUD leaked draw state");
+        require(Lines.getStroke() == stroke && Draw.xscl == xs && Draw.yscl == ys && Draw.z() == z &&
+            Draw.getBlend() == blend && Draw.getShader() == shader && Arrays.equals(transform, Draw.trans().val) &&
+            Arrays.equals(projectionMatrix, Draw.proj().val), "HUD leaked renderer state");
+    }
+
+    private void verifyEditor() {
+        require(hud.editing, "Editor did not open");
+        Element editor = Core.scene.find("control-groups-editor");
+        Seq<Element> controls = new Seq<>(); collect(editor, controls);
+        ScrollPane settingsScroll = null;
+        for (Element element : controls) if (element instanceof ScrollPane scroll) {
+            require(scroll.getWidget().getWidth() <= scroll.getScrollWidth() + 0.01f,
+                "Editor content exceeds the horizontal viewport: " + scroll.getWidget().getWidth() + "/" + scroll.getScrollWidth());
+            settingsScroll = scroll;
+        }
+        require(settingsScroll != null, "Editor scroll pane is missing");
+        float oldScroll = settingsScroll.getScrollY();
+        for (Element element : controls) if (element instanceof CheckBox check) {
+            require(check.getWidth() <= editor.getWidth() && check.getLabel().getWidth() > 0, "Editor label overflow");
+        }
+        float oldX = hud.settings.xFraction, oldY = hud.settings.yFraction, oldBreadth = hud.settings.breadth;
+        Element move = Core.scene.find("cg.editor.move");
+        require(move != null, "Move control is missing");
+        Vec2 start = move.localToStageCoordinates(new Vec2(move.getWidth() / 2, move.getHeight() / 2));
+        fire(move, InputEvent.InputEventType.touchDown, start.x, start.y);
+        fire(move, InputEvent.InputEventType.touchDragged, start.x + 10000, start.y + 10000);
+        fire(move, InputEvent.InputEventType.touchUp, start.x + 10000, start.y + 10000);
+        Core.scene.act(1f / 60f);
+        require(Math.abs(settingsScroll.getScrollY() - oldScroll) < 1f, "Moving the HUD also scrolled its settings");
+        require(hud.x >= 0 && hud.y >= 0 && hud.x + hud.getWidth() <= Core.scene.getWidth() + 0.01f &&
+            hud.y + hud.getHeight() <= Core.scene.getHeight() + 0.01f, "Move escaped the viewport");
+        hud.settings.xFraction = oldX; hud.settings.yFraction = oldY; hud.changed(); Core.scene.act(1f / 60f);
+        float edgeX = hud.x + hud.getWidth(), edgeY = hud.y + hud.getHeight() / 2;
+        fire(hud, InputEvent.InputEventType.touchDown, edgeX, edgeY);
+        fire(hud, InputEvent.InputEventType.touchDragged, edgeX - 40, edgeY);
+        fire(hud, InputEvent.InputEventType.touchUp, edgeX - 40, edgeY);
+        Core.scene.act(1f / 60f);
+        require(hud.settings.breadth < oldBreadth, "Frame edge did not resize the HUD");
+        hud.settings.breadth = oldBreadth; hud.changed(); Core.scene.act(1f / 60f);
+        require(Core.scene.hit(hud.x + hud.getWidth() - 1, hud.y + hud.getHeight() / 2, true) == hud,
+            "Editor panel intercepted the frame edge");
+    }
+
+    private void verifyUnitFields() {
+        Element panel = Core.scene.find("control-groups-unit-settings");
+        require(panel != null && panel.visible, "Unit settings did not open");
+        Seq<Element> controls = new Seq<>(); collect(panel, controls);
+        int colors = 0;
+        GlyphLayout glyph = new GlyphLayout();
+        for (Element element : controls) if (element instanceof TextField field && field.getText().startsWith("#")) {
+            glyph.setText(field.getStyle().font, "#FFFFFF");
+            var background = field.getStyle().background;
+            float padding = background == null ? 0 : background.getLeftWidth() + background.getRightWidth();
+            require(field.getWidth() >= glyph.width + padding + 2, "Color field does not fit seven characters");
+            colors++;
+        }
+        require(colors > 0, "No unit color controls were built");
+    }
+
+    private static void collect(Element element, Seq<Element> result) {
+        result.add(element);
+        if (element instanceof Group group) for (Element child : group.getChildren()) collect(child, result);
+    }
+
+    private static void fire(Element actor, InputEvent.InputEventType type, float stageX, float stageY) {
+        InputEvent event = new InputEvent(); event.type = type;
+        event.stageX = stageX; event.stageY = stageY; event.pointer = 0; event.keyCode = KeyCode.mouseLeft;
+        actor.fire(event);
     }
 
     private void click(float x, float y) {
         for (InputEvent.InputEventType type : new InputEvent.InputEventType[]{InputEvent.InputEventType.touchDown, InputEvent.InputEventType.touchUp}) {
-            InputEvent event = new InputEvent(); event.type = type;
-            event.stageX = hud.x + x; event.stageY = hud.y + y;
-            event.pointer = 0; event.keyCode = KeyCode.mouseLeft;
-            hud.fire(event);
+            fire(hud, type, hud.x + x, hud.y + y);
         }
     }
 
@@ -175,7 +266,8 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         reports.child("result.txt").writeString(String.format(Locale.ROOT,
             "Mindustry %s, %s%nActual hidden SDL/OpenGL client, 1000 stationary units.%n" +
             "Baseline update+render median/p95: %.3f/%.3f ms%nHUD update+render median/p95: %.3f/%.3f ms%n" +
-            "Selection: group single/double, type, projection PASS%nWorld reset: PASS%nDraw color/mix restore: PASS%n" +
+            "Selection: group single/double, type, projection PASS%nHide/resume without hidden scans: PASS%n" +
+            "Editor move/clamp, edge resize and label bounds: PASS%nUnit color field width: PASS%nWorld reset: PASS%nRenderer state restore: PASS%n" +
             "This is an automated sandbox run, not a multiplayer or interactive gameplay test.%n",
             Version.buildString(), Core.graphics.getGLVersion(), baseline[120] / 1e6, baseline[228] / 1e6,
             enabled[120] / 1e6, enabled[228] / 1e6));

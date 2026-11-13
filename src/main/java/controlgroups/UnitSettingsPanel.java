@@ -37,10 +37,10 @@ final class UnitSettingsPanel extends Table {
         add(title).growX().row();
         Table list = new Table();
         list.add("").width(38);
-        list.add(text("color")).width(94);
-        list.add(text("tier")).width(60);
-        list.add(text("type")).width(60);
-        list.add(text("resize")).width(76).row();
+        list.add(text("color")).width(136);
+        list.add(text("tier")).width(FIELD_WIDTH);
+        list.add(text("type")).width(FIELD_WIDTH);
+        list.add(text("resize")).width(96).row();
         for (var profile : hud.profiles.controllable) {
             var image = list.image(profile.unit.uiIcon).size(32).pad(3).get();
             image.addListener(new Tooltip(t -> t.background(Tex.pane).add(profile.unit.localizedName + "\n" + profile.unit.name).pad(6)));
@@ -51,16 +51,16 @@ final class UnitSettingsPanel extends Table {
                     profile.color.set(Color.valueOf(color.getText().replace("#", ""))); hud.profileChanged(profile);
                 }
             });
-            list.add(color).width(94).pad(2);
+            list.add(color).width(136).pad(2);
             list.add(numberField(profile.tier, 1, 1024, true, value -> {
                 profile.tier = (int)value; hud.profileChanged(profile);
-            })).width(60).pad(2);
+            })).width(FIELD_WIDTH).pad(2);
             list.add(numberField(profile.order, 1, 1024, true, value -> {
                 profile.order = (int)value; hud.profileChanged(profile);
-            })).width(60).pad(2);
+            })).width(FIELD_WIDTH).pad(2);
             list.add(numberField(profile.resize * 100, 1, 2000, false, value -> {
                 profile.resize = (float)value / 100f; hud.profileChanged(profile);
-            })).width(76).pad(2).row();
+            })).width(96).pad(2).row();
         }
         ScrollPane scroll = new ScrollPane(list);
         // Horizontal scrolling also keeps the complete row accessible in unusually small windows.
@@ -72,7 +72,7 @@ final class UnitSettingsPanel extends Table {
         if (!open) return;
         if (!built) build();
         float sw = Core.scene.getWidth(), sh = Core.scene.getHeight(), scale = hud.layout.scale;
-        float size = Math.min(Math.max(hud.layout.length, 390 * scale), Math.min(sw, sh) - 12 * scale);
+        float size = Math.min(Math.max(hud.layout.length, 500 * scale), Math.min(sw, sh) - 12 * scale);
         size = Math.max(1, size);
         float px = hud.x, py = hud.y;
         switch (hud.layout.centerSide) {

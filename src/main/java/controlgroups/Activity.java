@@ -6,7 +6,7 @@ import arc.graphics.Color;
 public enum Activity {
     IDLE(0, "888888", null),
     LOGIC(1, "a387ea", "logic"),
-    MOVE(2, "FFBC00", "block-omega-mech-pad"),
+    MOVE(2, "FFBC00", "blockOmegaMechPad"),
     BLOCKED(2, "B28743", null),
     DROWNING(3, "BD3D4C", "waves"),
     PATROL(4, "CEC47B", "refresh"),
@@ -15,9 +15,9 @@ public enum Activity {
     BUILD(6, "8EFA9D", "hammer"),
     REPAIR(7, "57FA6D", "wrench"),
     PURSUE(8, "FF9200", "distribution"),
-    ATTACK(9, "FF6600", "mode-attack"),
+    ATTACK(9, "FF6600", "modeAttack"),
     DAMAGED(10, "CC0000", "warning"),
-    COMBAT(11, "FF0000", "mode-pvp");
+    COMBAT(11, "FF0000", "modePvp");
 
     public final int priority;
     public final Color color;
