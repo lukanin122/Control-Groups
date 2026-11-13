@@ -1,5 +1,11 @@
 name: "ControlGroups"
 
+main: "controlgroups.ControlGroupsMod"
+
+java: true
+
+repo: "lukanin122/Control-Groups"
+
 displayName: "Control Groups"
 
 author: "[#666999[]]Name[#CC0000[]]less[#FFFF00[]]Ways"

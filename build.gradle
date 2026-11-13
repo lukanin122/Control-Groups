@@ -1,0 +1,122 @@
+plugins {
+    id 'java'
+}
+
+group = 'io.github.lukanin122'
+version = '1.0.0'
+
+repositories {
+    mavenCentral()
+    maven {
+        url = uri('https://jitpack.io')
+        content {
+            includeGroupByRegex 'com\\.github\\.Anuken.*'
+        }
+    }
+}
+
+dependencies {
+    compileOnly "com.github.Anuken.Mindustry:core:${mindustryVersion}"
+    compileOnly "com.github.Anuken.Arc:arc-core:${arcVersion}"
+    testImplementation "com.github.Anuken.Mindustry:core:${mindustryVersion}"
+    testImplementation "com.github.Anuken.Arc:arc-core:${arcVersion}"
+    testImplementation 'junit:junit:4.13.2'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 17
+    options.compilerArgs += ['-Xlint:deprecation', '-Xlint:unchecked']
+}
+
+tasks.named('jar') {
+    archiveFileName = 'Control-Groups.jar'
+    from('LICENSE')
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.named('test') {
+    testLogging { events 'failed', 'skipped' }
+}
+
+tasks.register('verifyModJar') {
+    group = 'verification'
+    description = 'Checks the entry point, metadata and absence of bundled game classes.'
+    dependsOn jar
+    doLast {
+        def archive = new java.util.zip.ZipFile(tasks.jar.archiveFile.get().asFile)
+        try {
+            ['mod.hjson', 'LICENSE', 'controlgroups/ControlGroupsMod.class', 'bundles/bundle.properties'].each {
+                if (archive.getEntry(it) == null) throw new GradleException("Missing mod entry: ${it}")
+            }
+            archive.entries().each { entry ->
+                if (entry.name.endsWith('.class') && !entry.name.startsWith('controlgroups/')) {
+                    throw new GradleException("Unexpected bundled dependency: ${entry.name}")
+                }
+                if (entry.name.startsWith('controlgroups/Smoke') || entry.name.endsWith('Test.class')) {
+                    throw new GradleException("Test code leaked into mod: ${entry.name}")
+                }
+            }
+            def metadata = archive.getInputStream(archive.getEntry('mod.hjson')).getText('UTF-8')
+            if (!metadata.contains('main: "controlgroups.ControlGroupsMod"') || !metadata.contains('hidden: true')) {
+                throw new GradleException('Invalid entry point or multiplayer visibility metadata')
+            }
+        } finally {
+            archive.close()
+        }
+    }
+}
+
+tasks.named('check') { dependsOn verifyModJar }
+
+tasks.register('benchmark', JavaExec) {
+    group = 'verification'
+    description = 'Synthetic group-update measurements; does not measure a running game.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'controlgroups.CoreBenchmark'
+}
+
+// Optional real SDL/OpenGL check against a locally installed desktop distribution.
+sourceSets {
+    smoke {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
+if (project.hasProperty('mindustryDesktopJar')) {
+    dependencies { smokeImplementation files(project.property('mindustryDesktopJar')) }
+}
+
+tasks.register('smoke', JavaExec) {
+    group = 'verification'
+    description = 'Isolated hidden-window Mindustry integration check; requires -PmindustryDesktopJar.'
+    dependsOn jar, smokeClasses
+    classpath = sourceSets.smoke.runtimeClasspath
+    mainClass = 'controlgroups.SmokeLauncher'
+    workingDir = layout.projectDirectory.dir('.gradle/smoke-run').asFile
+    def smokeDataDirectory = new File(workingDir, 'data-' + System.currentTimeMillis())
+    if (project.hasProperty('mindustryJava')) executable = project.property('mindustryJava')
+    systemProperty 'mindustry.data.dir', smokeDataDirectory.absolutePath
+    systemProperty 'nodiscord', 'true'
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    args layout.buildDirectory.dir('reports/smoke').get().asFile.absolutePath
+    doFirst {
+        workingDir.mkdirs()
+        copy { from tasks.jar.archiveFile; into new File(smokeDataDirectory, 'mods') }
+        if (project.hasProperty('buildWheelDirectory')) {
+            copy {
+                from project.property('buildWheelDirectory')
+                into new File(smokeDataDirectory, 'mods/BuildWheel')
+                exclude '.git/**', 'tests/**'
+            }
+        }
+    }
+}
