@@ -75,6 +75,7 @@ public final class GroupModel {
     private int profileRevision = -1;
     public int revision, classifiedUnits;
     public long membershipNanos, stateNanos, reconciliations, stateUpdates, sorts;
+    public boolean telemetry;
 
     public GroupModel(UnitProfiles profiles, Seq<mindustry.type.UnitType> types) {
         this.profiles = profiles;
@@ -88,7 +89,7 @@ public final class GroupModel {
     /** Never mutates saved IDs. Missing network entities may return in a later snapshot. */
     public void reconcile(IntSeq[] saved, IntFunction<Unit> resolve, Seq<Unit> teamUnits,
                           Team team, boolean includeUnassigned) {
-        long started = System.nanoTime();
+        long started = telemetry ? System.nanoTime() : 0;
         for (int i = 0; i < active.size; i++) active.get(i).mask = 0;
         for (Group group : groups) {
             group.members.clear();
@@ -99,13 +100,13 @@ public final class GroupModel {
             if (ids == null) continue;
             for (int j = 0; j < ids.size; j++) {
                 Unit unit = resolve.apply(ids.items[j]);
-                if (available(unit, team) && profiles.get(unit.type) != null) add(unit, i);
+                if (available(unit, team) && profiles.allowed(unit.type)) add(unit, i);
             }
         }
         if (includeUnassigned) {
             for (int i = 0; i < teamUnits.size; i++) {
                 Unit unit = teamUnits.get(i);
-                if (!available(unit, team) || !unit.type.playerControllable || profiles.get(unit.type) == null) continue;
+                if (!available(unit, team) || !profiles.allowed(unit.type)) continue;
                 if (resolve.apply(unit.id) != unit) continue;
                 Observation found = byId.get(unit.id);
                 if (found == null || found.unit != unit || found.mask == 0) add(unit, UNASSIGNED);
@@ -131,7 +132,7 @@ public final class GroupModel {
                 if (bucket.count != bucket.pending) {
                     changed = true;
                     bucket.count = bucket.pending;
-                    bucket.countText = bucket.count <= 1 ? "" : Integer.toString(bucket.count);
+                    bucket.countText = bucket.count == 0 ? "" : Integer.toString(bucket.count);
                 }
             }
             if (changed) {
@@ -140,11 +141,10 @@ public final class GroupModel {
                 group.types.sort(typeOrder);
                 group.compositionRevision++;
                 revision++;
-                sorts++;
+                if (telemetry) sorts++;
             }
         }
-        reconciliations++;
-        membershipNanos = System.nanoTime() - started;
+        if (telemetry) { reconciliations++; membershipNanos = System.nanoTime() - started; }
     }
 
     private void add(Unit unit, int groupIndex) {
@@ -172,21 +172,20 @@ public final class GroupModel {
     }
 
     public void sample(Team team, ModSettings settings, double now) {
-        long started = System.nanoTime();
-        classifiedUnits = 0;
+        long started = telemetry ? System.nanoTime() : 0;
+        if (telemetry) classifiedUnits = 0;
         for (int i = 0; i < active.size; i++) {
             Observation observation = active.get(i);
-            observation.sampleValid = available(observation.unit, team);
+            observation.sampleValid = available(observation.unit, team) && profiles.allowed(observation.unit.type);
             if (observation.sampleValid) {
                 observation.profile = profiles.get(observation.unit.type);
-                observation.sampleValid = observation.profile != null;
             }
             if (!observation.sampleValid) {
                 observation.activity = Activity.IDLE;
                 continue;
             }
             observation.activity = classify(observation, settings, now);
-            classifiedUnits++;
+            if (telemetry) classifiedUnits++;
         }
         for (Group group : groups) {
             Observation best = group.representative;
@@ -201,8 +200,7 @@ public final class GroupModel {
             group.representative = best;
             group.activity = best == null ? Activity.IDLE : best.activity;
         }
-        stateUpdates++;
-        stateNanos = System.nanoTime() - started;
+        if (telemetry) { stateUpdates++; stateNanos = System.nanoTime() - started; }
     }
 
     public void damage(Unit unit, double now, float ticks) {

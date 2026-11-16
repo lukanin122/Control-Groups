@@ -1,9 +1,14 @@
 package controlgroups;
 
 import arc.Settings;
+import arc.Core;
 import arc.graphics.Color;
+import arc.graphics.g2d.TextureRegion;
+import arc.struct.ObjectMap;
 import arc.struct.Seq;
 import mindustry.type.UnitType;
+import mindustry.world.Block;
+import mindustry.world.blocks.storage.CoreBlock;
 
 /** Session IDs are array indices only. Persistent keys always use namespaced content names. */
 public final class UnitProfiles {
@@ -31,28 +36,46 @@ public final class UnitProfiles {
         public final Color color = new Color();
         public int tier, order;
         public float resize = 1f;
+        public boolean banned;
+        public int defaultTier, defaultOrder;
+        public final Color defaultColor = new Color();
+        public boolean defaultBanned;
+        public TextureRegion uiIcon, fullIcon;
 
         private Profile(UnitType unit) {
             this.unit = unit;
+            uiIcon = unit.uiIcon; fullIcon = unit.fullIcon;
         }
     }
 
     private final Settings store;
     private final Profile[] byId;
-    public final Seq<Profile> controllable = new Seq<>();
-    public final float movementThreshold;
-    public final float largestHitSize;
+    // Membership can contain 100,000 IDs. Avoid a dependent Profile load for every repeated ban check.
+    private final boolean[] allowedById;
+    public final Seq<Profile> all = new Seq<>();
+    public float movementThreshold;
+    public float largestHitSize;
     public int revision;
 
     public UnitProfiles(Settings store, Seq<UnitType> types) {
+        this(store, types, new Seq<>());
+    }
+
+    public UnitProfiles(Settings store, Seq<UnitType> types, Seq<Block> blocks) {
         this.store = store;
         int capacity = 0;
         for (UnitType type : types) capacity = Math.max(capacity, type.id + 1);
         byId = new Profile[capacity];
-        float slowest = Float.MAX_VALUE, largest = 1f;
+        allowedById = new boolean[capacity];
         for (UnitType type : types) {
             Profile profile = new Profile(type);
             defaults(profile);
+            profile.defaultTier = profile.tier; profile.defaultOrder = profile.order;
+            profile.defaultColor.set(profile.color);
+            profile.defaultBanned = type.hidden || type.internal || !type.playerControllable;
+            for (Block block : blocks) if (block instanceof CoreBlock core && core.unitType == type) {
+                profile.defaultBanned = true; break;
+            }
             String key = PREFIX + type.name + ".";
             Object savedColor = store.get(key + "color", "");
             String color = savedColor instanceof String text ? text : "";
@@ -60,16 +83,14 @@ public final class UnitProfiles {
             profile.tier = clampIndex((int)number(key + "tier", profile.tier));
             profile.order = clampIndex((int)number(key + "order", profile.order));
             profile.resize = ModSettings.finite(number(key + "resize", 1f), 1f, 0.01f, 20f);
+            Object ban = store.get(key + "ban", profile.defaultBanned);
+            profile.banned = ban instanceof Boolean flag ? flag : profile.defaultBanned;
             byId[type.id] = profile;
-            if (type.playerControllable) {
-                controllable.add(profile);
-                if (type.speed > 0f) slowest = Math.min(slowest, type.speed);
-                if (Float.isFinite(type.hitSize)) largest = Math.max(largest, type.hitSize);
-            }
+            allowedById[type.id] = !profile.banned;
+            all.add(profile);
         }
-        movementThreshold = slowest == Float.MAX_VALUE ? 0.01f : Math.max(0.001f, slowest / 3f);
-        largestHitSize = largest;
-        controllable.sort((a, b) -> Integer.compare(a.unit.id, b.unit.id));
+        all.sort((a, b) -> Integer.compare(a.unit.id, b.unit.id));
+        refreshExtents();
     }
 
     public int capacity() {
@@ -86,7 +107,59 @@ public final class UnitProfiles {
         store.put(key + "tier", profile.tier);
         store.put(key + "order", profile.order);
         store.put(key + "resize", profile.resize);
+        store.put(key + "ban", profile.banned);
+        allowedById[profile.unit.id] = !profile.banned;
+        refreshExtents();
         revision++;
+    }
+
+    public boolean allowed(UnitType type) {
+        return type != null && type.id >= 0 && type.id < allowedById.length && allowedById[type.id];
+    }
+
+    /** Cached UV views trim transparent padding, so counterGap measures visible image-to-glyph distance. */
+    public void prepareIcons() {
+        if (Core.atlas == null) return;
+        ObjectMap<TextureRegion, TextureRegion> cropped = new ObjectMap<>();
+        for (int i = 0; i < all.size; i++) {
+            Profile profile = all.get(i);
+            profile.uiIcon = trim(profile.unit.uiIcon, cropped);
+            profile.fullIcon = trim(profile.unit.fullIcon, cropped);
+        }
+    }
+
+    private static TextureRegion trim(TextureRegion region, ObjectMap<TextureRegion, TextureRegion> cache) {
+        if (region == null || region.texture == null || !region.found()) return region;
+        TextureRegion known = cache.get(region);
+        if (known != null) return known;
+        TextureRegion result = region;
+        try {
+            var pixmap = Core.atlas.getPixmap(region);
+            int left = pixmap.width, right = -1, top = pixmap.height, bottom = -1;
+            for (int y = 0; y < pixmap.height; y++) for (int x = 0; x < pixmap.width; x++) {
+                if ((pixmap.get(x, y) & 255) == 0) continue;
+                left = Math.min(left, x); right = Math.max(right, x);
+                top = Math.min(top, y); bottom = Math.max(bottom, y);
+            }
+            if (right >= left && bottom >= top) result = new TextureRegion(region, left, top, right - left + 1, bottom - top + 1);
+        } catch (RuntimeException ignored) {
+            // Standalone textures supplied by a mod need not have an atlas pixmap. Keep their original UVs.
+        }
+        cache.put(region, result);
+        return result;
+    }
+
+    /** Metadata only, invoked on profile edits rather than scanning live units. */
+    private void refreshExtents() {
+        float slowest = Float.MAX_VALUE, largest = 0;
+        for (int i = 0; i < all.size; i++) {
+            Profile profile = all.get(i);
+            if (profile.banned) continue;
+            if (Float.isFinite(profile.unit.hitSize)) largest = Math.max(largest, profile.unit.hitSize);
+            if (profile.unit.speed > 0 && Float.isFinite(profile.unit.speed)) slowest = Math.min(slowest, profile.unit.speed);
+        }
+        largestHitSize = largest;
+        movementThreshold = slowest == Float.MAX_VALUE ? 0.01f : Math.max(0.001f, slowest / 3f);
     }
 
     public static boolean validColor(String text) {

@@ -5,6 +5,7 @@ import arc.graphics.Color;
 import arc.graphics.g2d.Draw;
 import arc.graphics.g2d.Fill;
 import arc.graphics.g2d.Font;
+import arc.graphics.g2d.GlyphLayout;
 import arc.graphics.g2d.Lines;
 import arc.graphics.g2d.TextureRegion;
 import arc.input.KeyCode;
@@ -32,6 +33,8 @@ import java.util.function.IntFunction;
 /** One actor for all group buttons. Only actual controls and visible rectangles take input. */
 public final class GroupsHud extends Element {
     private static final Color EDITOR_COLOR = Color.valueOf("ffd37f");
+    private static final Color NATIVE_BORDER = Color.valueOf("454545");
+    private static final float BORDER = 4f;
     private static final String[] GROUP_LABELS = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "*"};
     public final ModSettings settings;
     public final UnitProfiles profiles;
@@ -43,6 +46,7 @@ public final class GroupsHud extends Element {
     private final IntFunction<Unit> resolve = id -> Groups.unit.getByID(id);
     private final Vec2 pointer = new Vec2(), camera = new Vec2();
     private final Seq<Unit> selection = new Seq<>();
+    private final GlyphLayout counterMetrics = new GlyphLayout();
     private final HudEditor editorPanel;
     private final UnitSettingsPanel unitPanel;
     private InputHandler handler;
@@ -50,8 +54,11 @@ public final class GroupsHud extends Element {
     private boolean wasActive, dirty = true;
     private final long clockOrigin = System.nanoTime();
     public boolean editing;
+    private boolean editorCommandContext;
     private double now, membershipAt, stateAt, lastClickAt;
     private int settingsRevision = -1, profileRevision = -1, modelRevision = -1;
+    private boolean includedUnassigned, checkedMotion = true;
+    private float damageDuration = 120;
     private float sceneWidth = -1, sceneHeight = -1, uiScale = -1;
     private float delta = 1f / 60f, pressX, pressY, startX, startY, startWidth, startHeight;
     private int resizeEdges, pressedGroup = -1, pressedType = -1, pressedUnit = -1;
@@ -62,9 +69,11 @@ public final class GroupsHud extends Element {
     public GroupsHud() {
         name = "control-groups-hud";
         settings = new ModSettings(Core.settings);
-        profiles = new UnitProfiles(Core.settings, Vars.content.units());
+        profiles = new UnitProfiles(Core.settings, Vars.content.units(), Vars.content.blocks());
+        profiles.prepareIcons();
+        settings.initializeLargest(profiles.largestHitSize);
         model = new GroupModel(profiles, Vars.content.units());
-        layout = new HudLayout(model);
+        layout = new HudLayout(model, this::measureCounter);
         for (Activity activity : Activity.values()) {
             if (activity.icon == null) continue;
             var icon = Icon.icons.get(activity.icon);
@@ -86,25 +95,29 @@ public final class GroupsHud extends Element {
                 startX = GroupsHud.this.x; startY = GroupsHud.this.y;
                 startWidth = width; startHeight = height;
                 pressedZero = layout.zero.contains(x, y);
-                if (pressedZero) return true;
+                if (pressedZero) { event.stop(); return true; }
                 if (editing) {
                     resizeEdges = edges(x, y);
                     dragging = resizeEdges != 0;
+                    if (dragging) event.stop();
                     return dragging;
                 }
                 findTarget(x, y);
+                if (pressedGroup >= 0) event.stop();
                 return pressedGroup >= 0;
             }
 
             @Override
             public void touchDragged(InputEvent event, float x, float y, int pointer) {
-                if (dragging && pointer == 0) drag(x + GroupsHud.this.x, y + GroupsHud.this.y);
+                if (dragging && pointer == 0) { drag(x + GroupsHud.this.x, y + GroupsHud.this.y); event.stop(); }
             }
 
             @Override
             public void touchUp(InputEvent event, float x, float y, int pointer, KeyCode button) {
                 if (pointer != 0 || button != KeyCode.mouseLeft) return;
+                if (pressedZero || pressedGroup >= 0 || dragging) event.stop();
                 if (dragging) { finishDrag(); return; }
+                if (event.isTouchFocusCancel()) { pressedZero = false; pressedGroup = -1; return; }
                 float dx = x + GroupsHud.this.x - pressX, dy = y + GroupsHud.this.y - pressY;
                 if (dx * dx + dy * dy <= 64 * layout.scale * layout.scale && interactive()) {
                     if (pressedZero && layout.zero.contains(x, y)) toggleEditor();
@@ -131,8 +144,9 @@ public final class GroupsHud extends Element {
         if (handler != current || team != currentTeam) {
             reset(); handler = current; team = currentTeam;
         }
-        boolean active = current != null && currentTeam != null && Vars.state.isGame() && current.commandMode &&
+        boolean active = current != null && currentTeam != null && Vars.state.isGame() && (current.commandMode || settings.showBuild || editing) &&
             Vars.ui.hudfrag.shown() && !current.logicHideHud;
+        if (current != null) settings.useMode(editing ? editorCommandContext : current.commandMode);
         visible = active;
         if (!active) {
             editorPanel.visible = unitPanel.visible = false;
@@ -142,6 +156,7 @@ public final class GroupsHud extends Element {
             }
             wasActive = false;
         }
+        setTelemetry(active && editing && !Core.scene.hasDialog() && editorPanel.telemetryOpen());
     }
 
     @Override
@@ -154,9 +169,14 @@ public final class GroupsHud extends Element {
         Team currentTeam = team;
         if (!wasActive) { membershipAt = stateAt = 0; dirty = true; }
         wasActive = true;
-        if (settingsRevision != settings.revision || profileRevision != profiles.revision) {
-            dirty = true; membershipAt = stateAt = 0;
-            settingsRevision = settings.revision; profileRevision = profiles.revision;
+        if (settingsRevision != settings.revision) {
+            dirty = true; settingsRevision = settings.revision;
+            if (includedUnassigned != settings.unassigned) membershipAt = stateAt = 0;
+            if (checkedMotion != settings.checkMotion || damageDuration != settings.damageTicks) stateAt = 0;
+            includedUnassigned = settings.unassigned; checkedMotion = settings.checkMotion; damageDuration = settings.damageTicks;
+        }
+        if (profileRevision != profiles.revision) {
+            dirty = true; membershipAt = stateAt = 0; profileRevision = profiles.revision;
         }
         if (now >= membershipAt) {
             model.reconcile(current.controlGroups, resolve, currentTeam.data().units, currentTeam, settings.unassigned);
@@ -169,9 +189,10 @@ public final class GroupsHud extends Element {
         float sw = Core.scene.getWidth(), sh = Core.scene.getHeight(), scale = Scl.scl(1f);
         if (sceneWidth != sw || sceneHeight != sh || uiScale != scale || modelRevision != model.revision) dirty = true;
         if (dirty) {
+            layout.pixelRatio = Core.graphics.getBackBufferWidth() / Math.max(1f, sw);
             layout.rebuild(settings, profiles, sw, sh, scale, editing);
-            setBounds(settings.xFraction * Math.max(0, sw - layout.width), settings.yFraction * Math.max(0, sh - layout.height), layout.width, layout.height);
-            if (settings.collapse && layout.dock == null) { settings.collapse = false; settings.changed(); }
+            setBounds(layout.positionX, layout.positionY, layout.width, layout.height);
+            if (settings.collapse && layout.dock == null) { settings.setCollapse(false); settings.changed(); }
             sceneWidth = sw; sceneHeight = sh; uiScale = scale; modelRevision = model.revision;
             dirty = false;
             editorPanel.positionPanel(); unitPanel.positionPanel();
@@ -188,7 +209,7 @@ public final class GroupsHud extends Element {
     }
 
     private boolean interactive() {
-        return visible && handler != null && handler.commandMode && !handler.locked() && !Core.scene.hasDialog();
+        return visible && handler != null && !handler.locked() && !Core.scene.hasDialog();
     }
 
     @Override
@@ -205,34 +226,33 @@ public final class GroupsHud extends Element {
 
     @Override
     public void draw() {
-        long started = System.nanoTime();
+        long started = model.telemetry ? System.nanoTime() : 0;
         float savedColor = Draw.getColorPacked(), savedMix = Draw.getMixColorPacked(), stroke = Lines.getStroke();
         try {
             Draw.color(); Draw.mixcol();
-            if (editing) {
-                Draw.color(Color.gray, 0.55f);
-                Lines.stroke(layout.scale);
-                Lines.rect(x, y, width, height);
-            }
-            panel(layout.zero, editing ? EDITOR_COLOR : Color.gray, 1f);
+            panel(layout.zero, editing ? EDITOR_COLOR : null, 1f);
             icon(settingsIcon, x + layout.zero.x + layout.zero.width / 2f, y + layout.zero.y + layout.zero.height / 2f, 24f * layout.scale, 0, Color.white, 1f);
             for (int i = 0; i < layout.orderCount; i++) {
                 HudLayout.Box box = layout.boxes[layout.order[i]];
-                if (editing) {
-                    Draw.color(Color.gray, 0.35f); Lines.stroke(layout.scale);
-                    Lines.rect(x + box.full.x, y + box.full.y, box.full.width, box.full.height);
-                }
                 if (box.visible) drawBox(box, editing ? 0.32f : 1f);
+                if (editing) {
+                    Rect guide = box.visible ? box.full : box.guide;
+                    frame(guide.x, guide.y, guide.width, guide.height, Color.lightGray, Math.max(BORDER, 3 * layout.scale), 0.45f);
+                }
+            }
+            if (editing) {
+                frame(0, 0, width, height, Color.lightGray, Math.max(BORDER, 3 * layout.scale), 0.75f);
+                highlightEdges();
             }
         } finally {
             Draw.color(savedColor); Draw.mixcol(savedMix); Lines.stroke(stroke);
-            drawNanos = System.nanoTime() - started;
+            if (model.telemetry) drawNanos = System.nanoTime() - started;
         }
     }
 
     private void drawBox(HudLayout.Box box, float alpha) {
         Color border = box.group.activity.color;
-        panel(box.shown, border, alpha);
+        panel(box.shown, box.group.activity == Activity.IDLE ? null : border, alpha);
         float textSize = 0.55f * layout.scale;
         text(GROUP_LABELS[box.group.index],
             x + box.shown.x + 5 * layout.scale, y + box.shown.y + box.shown.height - 6 * layout.scale,
@@ -255,20 +275,13 @@ public final class GroupsHud extends Element {
         }
         if (settings.projection && box.projection.width > 0 && box.group.representative != null) {
             Unit unit = box.group.representative.unit;
-            if (GroupModel.available(unit, team)) {
+            if (GroupModel.available(unit, team) && profiles.allowed(unit.type)) {
                 var profile = profiles.get(unit.type);
                 float pixels = layout.projectionPixels(unit.type.hitSize, settings) * profile.resize;
                 projection.draw(unit, box.group.index, x + box.projection.x + box.projection.width / 2,
-                    y + box.projection.y + box.projection.height / 2, pixels, box.projection.width, delta, settings.advanced, alpha);
+                    y + box.projection.y + box.projection.height / 2, pixels, Math.min(box.projection.width, box.projection.height), delta, settings.advanced, alpha);
             }
-            Draw.color(border, alpha); Lines.stroke(layout.scale);
-            Rect r = box.projection;
-            switch (layout.centerSide) {
-                case LEFT -> Lines.line(x + r.x + r.width, y + box.shown.y, x + r.x + r.width, y + box.shown.y + box.shown.height);
-                case RIGHT -> Lines.line(x + r.x, y + box.shown.y, x + r.x, y + box.shown.y + box.shown.height);
-                case BOTTOM -> Lines.line(x + box.shown.x, y + r.y + r.height, x + box.shown.x + box.shown.width, y + r.y + r.height);
-                case TOP -> Lines.line(x + box.shown.x, y + r.y, x + box.shown.x + box.shown.width, y + r.y);
-            }
+            divider(box, box.group.activity == Activity.IDLE ? NATIVE_BORDER : border, alpha);
         }
         if (box.group.activity.icon != null) {
             float cx = x + box.shown.x + box.shown.width / 2, cy = y + box.shown.y + box.shown.height / 2;
@@ -292,24 +305,59 @@ public final class GroupsHud extends Element {
     }
 
     private void drawCell(HudLayout.Cell cell, float alpha) {
-        var region = cell.bucket.profile.unit.uiIcon;
+        var region = cell.region;
         if (region == null || region.texture == null || region.width <= 0 || region.height <= 0) return;
-        float iconSize = Math.min(24f * layout.scale, Math.min(cell.rect.height, cell.rect.width));
-        float cx = x + cell.rect.x + cell.rect.width - iconSize / 2f;
         float cy = y + cell.rect.y + cell.rect.height / 2;
         Draw.color(Color.white, alpha);
-        float ratio = iconSize / Math.max(region.width, region.height);
-        Draw.rect(region, cx, cy, region.width * ratio, region.height * ratio);
-        if (!cell.bucket.countText.isEmpty()) text(cell.bucket.countText,
-            cx - iconSize / 2 - 2f * layout.scale, cy, cell.bucket.profile.color,
-            0.65f * layout.scale, Align.right, alpha);
+        Draw.rect(region, x + cell.icon.x + cell.icon.width / 2, y + cell.icon.y + cell.icon.height / 2, cell.icon.width, cell.icon.height);
+        if (cell.showCount) text(cell.bucket.countText, x + cell.counterRight, cy, cell.bucket.profile.color,
+            cell.fontScale, Align.right, alpha);
     }
 
     private void panel(Rect rect, Color border, float alpha) {
         Draw.color(Color.white, alpha);
-        Tex.pane.draw(x + rect.x, y + rect.y, rect.width, rect.height);
-        Draw.color(border, alpha); Lines.stroke(layout.scale);
-        Lines.rect(x + rect.x, y + rect.y, rect.width, rect.height);
+        if (rect.width >= BORDER * 2 && rect.height >= BORDER * 2) Tex.pane.draw(x + rect.x, y + rect.y, rect.width, rect.height);
+        else {
+            Draw.color(0, 0, 0, alpha * 0.6f); Fill.rect(x + rect.x + rect.width / 2, y + rect.y + rect.height / 2, rect.width, rect.height);
+        }
+        if (border != null) frame(rect.x, rect.y, rect.width, rect.height, border, BORDER, alpha);
+        else if (rect.width < BORDER * 2 || rect.height < BORDER * 2) frame(rect.x, rect.y, rect.width, rect.height, NATIVE_BORDER, BORDER, alpha);
+    }
+
+    private void frame(float px, float py, float w, float h, Color color, float thickness, float alpha) {
+        float t = Math.max(0, Math.min(thickness, Math.min(w, h) / 2));
+        Draw.color(color, alpha);
+        Fill.rect(x + px + w / 2, y + py + t / 2, w, t);
+        Fill.rect(x + px + w / 2, y + py + h - t / 2, w, t);
+        Fill.rect(x + px + t / 2, y + py + h / 2, t, Math.max(0, h - 2 * t));
+        Fill.rect(x + px + w - t / 2, y + py + h / 2, t, Math.max(0, h - 2 * t));
+    }
+
+    private void highlightEdges() {
+        if (!dragging || moveDrag) return;
+        float t = Math.min(Math.max(BORDER, 3 * layout.scale), Math.min(width, height) / 2);
+        Draw.color(EDITOR_COLOR);
+        if ((resizeEdges & 1) != 0) Fill.rect(x + t / 2, y + height / 2, t, height);
+        if ((resizeEdges & 2) != 0) Fill.rect(x + width - t / 2, y + height / 2, t, height);
+        if ((resizeEdges & 4) != 0) Fill.rect(x + width / 2, y + t / 2, width, t);
+        if ((resizeEdges & 8) != 0) Fill.rect(x + width / 2, y + height - t / 2, width, t);
+    }
+
+    private void divider(HudLayout.Box box, Color color, float alpha) {
+        Rect r = box.projection; float t = Math.min(BORDER, Math.min(r.width, r.height));
+        Draw.color(color, alpha);
+        switch (layout.projectionSide) {
+            case LEFT -> Fill.rect(x + r.x + r.width - t / 2, y + r.y + r.height / 2, t, r.height);
+            case RIGHT -> Fill.rect(x + r.x + t / 2, y + r.y + r.height / 2, t, r.height);
+            case BOTTOM -> Fill.rect(x + r.x + r.width / 2, y + r.y + r.height - t / 2, r.width, t);
+            case TOP -> Fill.rect(x + r.x + r.width / 2, y + r.y + t / 2, r.width, t);
+        }
+    }
+
+    private float measureCounter(String value, float fontScale) {
+        Font font = Fonts.outline; float sx = font.getData().scaleX, sy = font.getData().scaleY;
+        try { font.getData().setScale(fontScale); counterMetrics.setText(font, value); return counterMetrics.width; }
+        finally { font.getData().setScale(sx, sy); }
     }
 
     private static void icon(TextureRegion region, float x, float y, float size, float rotation, Color color, float alpha) {
@@ -363,12 +411,15 @@ public final class GroupsHud extends Element {
         var group = model.groups[pressedGroup];
         for (int i = 0; i < group.members.size; i++) {
             Unit unit = group.members.get(i).unit;
-            if (!GroupModel.available(unit, team) || !unit.isCommandable() || !unit.allowCommand()) continue;
+            if (!GroupModel.available(unit, team) || !profiles.allowed(unit.type) || !unit.type.playerControllable || !unit.isCommandable() || !unit.allowCommand()) continue;
             if (pressedType >= 0 && unit.type.id != pressedType) continue;
             if (pressedUnit >= 0 && unit.id != pressedUnit) continue;
             selection.add(unit);
         }
         if (selection.isEmpty()) return;
+        // Cancel only the active placement preview, not the player's queued construction work.
+        handler.block = null; handler.linePlans.clear(); handler.selectPlans.clear();
+        handler.commandMode = true; handler.commandRect = false;
         handler.selectedUnits.set(selection);
         handler.commandBuildings.clear();
         long key = pressedUnit >= 0 ? (1L << 62) | ((long)pressedUnit << 4) | pressedGroup :
@@ -385,9 +436,10 @@ public final class GroupsHud extends Element {
     }
 
     public void toggleEditor() {
+        if (!editing && handler != null) editorCommandContext = handler.commandMode;
         editing = !editing; dirty = true;
         unitPanel.open = false;
-        if (editing) editorPanel.refreshToolbar();
+        if (!editing) setTelemetry(false);
         Core.scene.unfocus(editorPanel); Core.scene.unfocus(unitPanel);
     }
 
@@ -402,11 +454,11 @@ public final class GroupsHud extends Element {
     }
 
     public void profileChanged(UnitProfiles.Profile profile) {
-        profiles.save(profile); dirty = true;
+        profiles.save(profile); settings.initializeLargest(profiles.largestHitSize); dirty = true;
     }
 
     public void rotate() {
-        settings.vertical = !settings.vertical; changed(); editorPanel.refreshToolbar();
+        settings.vertical = !settings.vertical; changed();
     }
 
     public void beginMove(float stageX, float stageY) {
@@ -460,11 +512,20 @@ public final class GroupsHud extends Element {
         model.damage(unit, clockSeconds(), settings.damageTicks);
     }
 
+    public float tooltipWidth() {
+        return Math.min(Core.scene.getWidth(), editorPanel.getWidth() > 0 ? editorPanel.getWidth() : 480 * Scl.scl(1));
+    }
+
+    public void setTelemetry(boolean enabled) {
+        model.telemetry = layout.telemetry = enabled;
+    }
+
     private double clockSeconds() {
         return (System.nanoTime() - clockOrigin) / 1_000_000_000.0;
     }
 
     public void reset() {
+        setTelemetry(false);
         model.clear(); projection.clear(); selection.clear();
         dragging = moveDrag = wasActive = false;
         pressedGroup = -1; lastClickKey = Long.MIN_VALUE;

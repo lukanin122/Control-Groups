@@ -1,255 +1,387 @@
 package controlgroups;
 
+import arc.graphics.g2d.TextureRegion;
 import arc.math.Mathf;
 import arc.math.geom.Rect;
 import controlgroups.GroupModel.Bucket;
 import controlgroups.GroupModel.Group;
 
-/** Pure geometry. No scene, renderer, game scan or allocation in animation updates. */
+/** Geometry works on prepared buckets, never on live unit collections. P = longitudinal, Q = transverse. */
 public final class HudLayout {
     public enum Side { LEFT, RIGHT, BOTTOM, TOP }
+    @FunctionalInterface public interface CounterMeasure { float width(String text, float fontScale); }
 
     public static final class Cell {
         public final Rect rect = new Rect();
+        public final Rect icon = new Rect();
         public Bucket bucket;
+        public float iconSize, fontScale, countWidth, naturalWidth, naturalHeight;
+        public boolean showCount;
+        public TextureRegion region;
+        public float counterRight;
     }
 
     public static final class Box {
         public final Group group;
-        public final Rect full = new Rect(), shown = new Rect(), projection = new Rect(), content = new Rect();
+        public final Rect full = new Rect(), shown = new Rect(), guide = new Rect();
+        public final Rect projection = new Rect(), content = new Rect(), contentFull = new Rect();
         public Cell[] cells = new Cell[0];
         public int cellCount;
-        public float primary, secondary, projectionSize, expansion = 1f;
+        public float primary, secondary, structurePrimary, reservePrimary, needPrimary, needSecondary;
+        public float trackingCross, projectionSize, expansion = 1f;
         public boolean visible;
-
-        private Box(Group group) {
-            this.group = group;
-        }
+        private Box(Group group) { this.group = group; }
     }
 
     public final Box[] boxes = new Box[GroupModel.GROUPS];
     public final Rect zero = new Rect();
     public final int[] order = new int[GroupModel.GROUPS];
-    public int orderCount;
+    private final int[] active = new int[GroupModel.GROUPS];
+    private final float[] needs = new float[GroupModel.GROUPS], floors = new float[GroupModel.GROUPS];
+    private final float[] allocated = new float[GroupModel.GROUPS];
+    private final CounterMeasure measure;
+    public int orderCount, activeCount;
     public float width, height, length, breadth, maxPrimary, scale, zeroSize, projectionScale;
-    public Side centerSide = Side.RIGHT, dock;
+    public float availablePrimary, projectionReserved, structuralBudget, usedPrimary;
+    public float positionX, positionY, minX, minY, maxX, maxY, pixelRatio = 1;
+    public Side centerSide = Side.RIGHT, projectionSide = Side.RIGHT, dock;
     public long rebuilds;
-    private boolean vertical, reverse, crossFromLow;
-    private float pad, typeGap, tierGap;
+    public boolean telemetry;
+    private boolean vertical, reverse, crossLow, alongLow;
+    private float pad, typeGap, tierGap, trackingBase, currentCounterGap;
 
-    public HudLayout(GroupModel model) {
+    public HudLayout(GroupModel model) { this(model, (text, size) -> text.length() * 12f * size); }
+
+    public HudLayout(GroupModel model, CounterMeasure measure) {
+        this.measure = measure;
         for (int i = 0; i < boxes.length; i++) boxes[i] = new Box(model.groups[i]);
     }
 
-    public void rebuild(ModSettings settings, UnitProfiles profiles, float screenWidth, float screenHeight,
-                        float scale, boolean editor) {
-        this.scale = scale;
-        vertical = settings.vertical; reverse = settings.reverse;
-        pad = 4f * scale; typeGap = settings.typeGap * scale; tierGap = settings.tierGap * scale;
-        length = Math.min(settings.length * scale, vertical ? screenHeight : screenWidth);
-        breadth = Math.min(settings.breadth * scale, vertical ? screenWidth : screenHeight);
-        length = Math.max(1f, length); breadth = Math.max(1f, breadth);
+    public void rebuild(ModSettings s, UnitProfiles profiles, float sw, float sh, float scale, boolean editor) {
+        this.scale = scale; vertical = s.vertical; reverse = s.reverse;
+        pad = 4 * scale; typeGap = s.typeGap * scale; tierGap = s.tierGap * scale;
+        currentCounterGap = s.counterGap * scale;
+        length = Math.max(1, Math.min(s.length * scale, vertical ? sh : sw));
+        breadth = Math.max(1, Math.min(s.breadth * scale, vertical ? sw : sh));
         width = vertical ? breadth : length; height = vertical ? length : breadth;
-        float x = settings.xFraction * Math.max(0, screenWidth - width);
-        float y = settings.yFraction * Math.max(0, screenHeight - height);
-        centerSide = centerSide(x, y, width, height, screenWidth, screenHeight);
-        dock = dock(x, y, width, height, screenWidth, screenHeight, scale);
-        crossFromLow = vertical ? (x + width / 2f >= screenWidth / 2f) : (y + height / 2f >= screenHeight / 2f);
-        zeroSize = Math.min(44f * scale, Math.min(length, breadth));
-        int slots = settings.unassigned ? 11 : 10;
-        float gap = Math.min(settings.groupGap * scale, length / (slots * 3f));
-        float zeroGap = Math.min(settings.zeroGap * scale, length / 10f);
-        maxPrimary = Math.max(1f, (length - zeroSize - zeroGap - gap * (slots - 1)) / slots);
-        float maxCompressed = compressed(profiles.largestHitSize, settings);
-        float maxSlot = Math.max(1f, Math.min(maxPrimary - 2 * pad, breadth - 2 * pad));
-        if (settings.maxProjection > 0) maxSlot = Math.min(maxSlot, settings.maxProjection * scale / settings.occupancy);
-        float adaptation = settings.adapt && maxCompressed > 0 ?
-            Math.min(1f, maxSlot * settings.occupancy / (maxCompressed * scale)) : 1f;
-        projectionScale = scale * adaptation;
-        float commonSecondary = zeroSize;
-        for (Box box : boxes) {
-            box.visible = !box.group.empty() && (box.group.index != GroupModel.UNASSIGNED || settings.unassigned);
-            box.projectionSize = 0;
-            float idealPrimary = 0, rowWidth = 0, rowHeight = 0, idealSecondary = 0;
-            int rows = 0, lastTier = -1;
-            for (int i = 0; i < box.group.types.size; i++) {
-                Bucket bucket = box.group.types.get(i);
-                if (bucket.profile.tier != lastTier) {
-                    idealPrimary = Math.max(idealPrimary, Math.max(0, rowWidth - typeGap));
-                    idealSecondary += rowHeight + (rows > 0 ? tierGap : 0);
-                    rowWidth = rowHeight = 0; rows++; lastTier = bucket.profile.tier;
-                }
-                rowWidth += cellPrimary(bucket) + typeGap;
-                rowHeight = Math.max(rowHeight, cellSecondary(bucket));
-                if (settings.projection) box.projectionSize = Math.max(box.projectionSize,
-                    compressed(bucket.profile.unit.hitSize, settings) * scale * adaptation / settings.occupancy);
-            }
-            idealPrimary = Math.max(idealPrimary, Math.max(0, rowWidth - typeGap));
-            idealSecondary += rowHeight;
-            // A manual resize never participates in these bounds.
-            box.projectionSize = Math.min(box.projectionSize, Math.max(1f, Math.min(maxPrimary, breadth) - 2 * pad));
-            boolean along = projectionAlongPrimary();
-            box.primary = Math.min(maxPrimary, Math.max(24f * scale, idealPrimary + 2 * pad + (along ? box.projectionSize : 0)));
-            box.secondary = Math.min(breadth, Math.max(zeroSize, idealSecondary + 2 * pad + (!along ? box.projectionSize : 0)));
-            if (box.visible) commonSecondary = Math.max(commonSecondary, box.secondary);
-        }
+        positionX = s.xFraction * Math.max(0, sw - width);
+        positionY = s.yFraction * Math.max(0, sh - height);
+        centerSide = centerSide(positionX, positionY, width, height, sw, sh);
+        dock = dock(positionX, positionY, width, height, sw, sh, scale);
+        crossLow = vertical ? positionX + width / 2 >= sw / 2 : positionY + height / 2 >= sh / 2;
+        alongLow = vertical ? positionY + height / 2 >= sh / 2 : positionX + width / 2 >= sw / 2;
+        projectionSide = s.internalProjection ?
+            (vertical ? (alongLow ? Side.BOTTOM : Side.TOP) : (alongLow ? Side.LEFT : Side.RIGHT)) :
+            (vertical ? (crossLow ? Side.LEFT : Side.RIGHT) : (crossLow ? Side.BOTTOM : Side.TOP));
+        zeroSize = Math.min(44 * scale, Math.min(length, breadth));
         orderCount = 0;
-        if (settings.unassigned && settings.unassignedFirst) order[orderCount++] = GroupModel.UNASSIGNED;
+        if (s.unassigned && s.unassignedFirst) order[orderCount++] = GroupModel.UNASSIGNED;
         for (int i = 0; i < 10; i++) order[orderCount++] = i;
-        if (settings.unassigned && !settings.unassignedFirst) order[orderCount++] = GroupModel.UNASSIGNED;
+        if (s.unassigned && !s.unassignedFirst) order[orderCount++] = GroupModel.UNASSIGNED;
+        activeCount = 0;
+        for (Box box : boxes) {
+            box.visible = !box.group.empty() && (box.group.index != GroupModel.UNASSIGNED || s.unassigned);
+            box.primary = box.reservePrimary = box.trackingCross = 0;
+            prepareNatural(box, s);
+        }
+        for (int i = 0; i < orderCount; i++) if (boxes[order[i]].visible) active[activeCount++] = order[i];
+        float zeroGap = Math.min(s.zeroGap * scale, Math.max(0, length - zeroSize) / 4);
+        float gap = Math.min(s.groupGap * scale, Math.max(0, length - zeroSize - zeroGap) / Math.max(1, orderCount * 3));
+        availablePrimary = Math.max(0, length - zeroSize - zeroGap - Math.max(0, activeCount - 1) * gap);
+        maxPrimary = Math.max(0, (length - zeroSize - zeroGap - (orderCount - 1) * gap) / orderCount);
+        int divisor = s.spaceMode == ModSettings.SpaceMode.LIMITED ? orderCount : Math.max(1, activeCount);
+        // Reserved independently of final structural allocations. A manual largest override never changes this reserve.
+        float nominal = Math.max(0, availablePrimary / divisor - 2 * pad);
+        trackingBase = s.projection ? Math.min(compressed(profiles.largestHitSize, s) * scale / s.occupancy,
+            Math.max(0, Math.min(nominal, breadth - 2 * pad))) : 0;
+        float minimumSum = 0;
+        for (int i = 0; i < activeCount; i++) minimumSum += Math.min(24 * scale, boxes[active[i]].needPrimary);
+        float reserve = s.internalProjection ? Math.min(trackingBase,
+            Math.max(0, availablePrimary - minimumSum) / Math.max(1, activeCount)) : 0;
+        projectionReserved = reserve * activeCount;
+        structuralBudget = Math.max(0, availablePrimary - projectionReserved);
+        for (int i = 0; i < activeCount; i++) {
+            int id = active[i]; Box box = boxes[id];
+            box.reservePrimary = reserve;
+            needs[id] = box.needPrimary;
+            floors[id] = Math.min(24 * scale, needs[id]);
+            float cap = switch (s.spaceMode) {
+                case LIMITED -> availablePrimary / orderCount;
+                case EQUAL -> availablePrimary / Math.max(1, activeCount);
+                case PROPORTIONAL -> Float.MAX_VALUE;
+            };
+            if (id == GroupModel.UNASSIGNED && s.freeSpaceMode == ModSettings.FreeSpaceMode.LIMITED)
+                cap = availablePrimary / orderCount;
+            needs[id] = Math.min(needs[id], Math.max(0, cap - reserve));
+            floors[id] = Math.min(floors[id], needs[id]);
+            allocated[id] = 0;
+        }
+        Box free = boxes[GroupModel.UNASSIGNED];
+        boolean residual = free.visible && s.freeSpaceMode == ModSettings.FreeSpaceMode.RESIDUAL;
+        if (residual) {
+            int id = GroupModel.UNASSIGNED;
+            float totalMinimum = Math.min(s.freeMinimum * scale, length / 3);
+            floors[id] = Math.max(floors[id], Math.max(0, totalMinimum - reserve));
+            floors[id] = Math.min(floors[id], structuralBudget);
+            needs[id] = floors[id];
+        }
+        allocate(structuralBudget, residual);
+        float fitSpan = Float.MAX_VALUE, commonQ = zeroSize;
+        float screenQ = vertical ? sw : sh;
+        for (int i = 0; i < activeCount; i++) {
+            Box box = boxes[active[i]];
+            box.structurePrimary = allocated[box.group.index];
+            box.primary = box.structurePrimary + reserve;
+            float innerP = Math.max(0, box.primary - 2 * pad);
+            float structureQ = Math.min(breadth, Math.max(zeroSize, box.needSecondary));
+            float trackQ = 0;
+            if (s.projection && !s.internalProjection) {
+                structureQ = Math.max(0, Math.min(structureQ, breadth - trackingBase));
+                trackQ = trackingBase;
+                if (s.minTrackingSquare) trackQ = Math.max(trackQ, innerP);
+                trackQ = Math.min(trackQ, Math.max(0, screenQ - structureQ));
+                fitSpan = Math.min(fitSpan, Math.min(innerP, trackingBase));
+            } else if (s.projection) {
+                fitSpan = Math.min(fitSpan, Math.min(reserve, Math.max(0, structureQ - 2 * pad)));
+            }
+            box.trackingCross = trackQ;
+            box.projectionSize = s.internalProjection ? reserve : trackQ;
+            box.secondary = structureQ + trackQ;
+            commonQ = Math.max(commonQ, box.secondary);
+        }
+        float largest = s.manualLargest ? s.manualLargestSize : profiles.largestHitSize;
+        float compressedLargest = compressed(largest, s) * scale;
+        float fitting = s.adapt && activeCount > 0 && s.projection ?
+            Math.min(1, Math.max(0, fitSpan) * s.occupancy / compressedLargest) : 1;
+        projectionScale = scale * fitting;
         place(zero, 0, outerCross(zeroSize), zeroSize, zeroSize);
-        float position = zeroSize + zeroGap;
+        float cursor = zeroSize + zeroGap;
         for (int i = 0; i < orderCount; i++) {
             Box box = boxes[order[i]];
-            if (settings.align) box.secondary = commonSecondary;
-            place(box.full, editor ? zeroSize + zeroGap + i * (maxPrimary + gap) : position,
-                outerCross(box.secondary), editor ? maxPrimary : box.primary, box.secondary);
-            if (box.visible) position += box.primary + gap;
+            place(box.guide, zeroSize + zeroGap + i * (maxPrimary + gap), 0, maxPrimary, breadth);
+            if (!box.visible) { box.full.set(0, 0, 0, 0); box.shown.set(box.full); continue; }
+            if (s.align) box.secondary = commonQ;
+            place(box.full, cursor, outerCross(box.secondary), box.primary, box.secondary);
+            cursor += box.primary + gap;
+            setAreas(box.full, box.contentFull, box.projection, box, s);
             if (editor) box.expansion = 1;
-            animate(box, settings, editor, false, 1f);
-            prepareCells(box);
+            prepareCells(box, s);
+            animate(box, s, editor, false, 0);
         }
-        rebuilds++;
+        usedPrimary = activeCount == 0 ? 0 : cursor - zeroSize - zeroGap - activeCount * gap;
+        // The editable frame retains its configured size; only square tracking may extend beyond it.
+        minX = 0; minY = 0; maxX = width; maxY = height;
+        for (Box box : boxes) if (box.visible) {
+            minX = Math.min(minX, box.full.x); minY = Math.min(minY, box.full.y);
+            maxX = Math.max(maxX, box.full.x + box.full.width); maxY = Math.max(maxY, box.full.y + box.full.height);
+        }
+        positionX = Mathf.clamp(positionX, -minX, Math.max(-minX, sw - maxX));
+        positionY = Mathf.clamp(positionY, -minY, Math.max(-minY, sh - maxY));
+        if (telemetry) rebuilds++;
     }
 
-    public void animate(Box box, ModSettings settings, boolean editor, boolean hovered, float delta) {
-        boolean collapse = settings.collapse && dock != null && !editor;
-        float target = !collapse || (settings.hover && hovered) ? 1f : 0f;
-        box.expansion = Mathf.approach(box.expansion, target, delta / UpdatePolicy.SLIDE_SECONDS);
-        box.shown.set(box.full);
-        float fullCross = vertical ? box.full.width : box.full.height;
-        float small = Math.min(fullCross, settings.projection ? box.projectionSize + 2 * pad : 12f * scale);
-        float size = Mathf.lerp(small, fullCross, box.expansion);
-        if (vertical) {
-            box.shown.width = size;
-            if (crossFromLow) box.shown.x += fullCross - size;
-        } else {
-            box.shown.height = size;
-            if (crossFromLow) box.shown.y += fullCross - size;
+    /** Bounded water filling: at most 11 groups, no allocation, protected minima before proportional shortage. */
+    private void allocate(float budget, boolean residual) {
+        float sumFloors = 0;
+        for (int i = 0; i < activeCount; i++) sumFloors += floors[active[i]];
+        float minimumScale = sumFloors > budget && sumFloors > 0 ? budget / sumFloors : 1;
+        float remaining = budget;
+        for (int i = 0; i < activeCount; i++) {
+            int id = active[i]; allocated[id] = floors[id] * minimumScale; remaining -= allocated[id];
         }
-        box.content.set(box.shown).grow(-pad);
-        box.content.width = Math.max(0, box.content.width); box.content.height = Math.max(0, box.content.height);
-        float square = Math.min(box.projectionSize, Math.min(box.content.width, box.content.height));
-        box.projection.set(0, 0, 0, 0);
-        if (square > 0 && settings.projection) {
-            float cx = box.content.x + box.content.width / 2f, cy = box.content.y + box.content.height / 2f;
-            switch (centerSide) {
-                case LEFT -> { box.projection.set(box.content.x, cy - square / 2, square, square); box.content.x += square; box.content.width -= square; }
-                case RIGHT -> { box.projection.set(box.content.x + box.content.width - square, cy - square / 2, square, square); box.content.width -= square; }
-                case BOTTOM -> { box.projection.set(cx - square / 2, box.content.y, square, square); box.content.y += square; box.content.height -= square; }
-                case TOP -> { box.projection.set(cx - square / 2, box.content.y + box.content.height - square, square, square); box.content.height -= square; }
+        if (minimumScale < 1) {
+            if (residual) {
+                float freeFloor = Math.min(budget, floors[GroupModel.UNASSIGNED]);
+                float otherFloors = sumFloors - floors[GroupModel.UNASSIGNED];
+                float otherScale = otherFloors > 0 ? Math.max(0, budget - freeFloor) / otherFloors : 0;
+                for (int i = 0; i < activeCount; i++) {
+                    int id = active[i];
+                    allocated[id] = id == GroupModel.UNASSIGNED ? freeFloor : floors[id] * otherScale;
+                }
+            }
+            return;
+        }
+        int fixed = residual ? 1 << GroupModel.UNASSIGNED : 0;
+        remaining = budget - (residual ? allocated[GroupModel.UNASSIGNED] : 0);
+        for (int pass = 0; pass <= activeCount; pass++) {
+            float weight = 0;
+            for (int i = 0; i < activeCount; i++) if ((fixed & (1 << active[i])) == 0) weight += needs[active[i]];
+            if (weight <= 0.001f) break;
+            float ratio = Math.min(1, remaining / weight);
+            boolean clamped = false;
+            for (int i = 0; i < activeCount; i++) {
+                int id = active[i];
+                if ((fixed & (1 << id)) != 0) continue;
+                if (ratio * needs[id] < floors[id]) {
+                    allocated[id] = floors[id]; remaining -= allocated[id]; fixed |= 1 << id; clamped = true;
+                }
+            }
+            if (!clamped) {
+                for (int i = 0; i < activeCount; i++) {
+                    int id = active[i];
+                    if ((fixed & (1 << id)) == 0) allocated[id] = needs[id] * ratio;
+                }
+                break;
             }
         }
+        if (residual) {
+            float consumed = 0;
+            for (int i = 0; i < activeCount; i++) consumed += allocated[active[i]];
+            allocated[GroupModel.UNASSIGNED] += Math.max(0, budget - consumed);
+        }
     }
 
-    private void prepareCells(Box box) {
+    private void prepareNatural(Box box, ModSettings s) {
         int count = box.group.types.size;
         if (box.cells.length < count) {
-            Cell[] enlarged = new Cell[count];
-            System.arraycopy(box.cells, 0, enlarged, 0, box.cells.length);
-            for (int i = box.cells.length; i < enlarged.length; i++) enlarged[i] = new Cell();
-            box.cells = enlarged;
+            Cell[] next = new Cell[count];
+            System.arraycopy(box.cells, 0, next, 0, box.cells.length);
+            for (int i = box.cells.length; i < count; i++) next[i] = new Cell();
+            box.cells = next;
         }
         box.cellCount = count;
-        // Cells are prepared against the expanded geometry; animation only clips/reveals them.
-        float contentP = vertical ? box.full.height : box.full.width;
-        float contentQ = vertical ? box.full.width : box.full.height;
-        contentP = Math.max(1, contentP - 2 * pad - (projectionAlongPrimary() ? box.projectionSize : 0));
-        contentQ = Math.max(1, contentQ - 2 * pad - (!projectionAlongPrimary() ? box.projectionSize : 0));
-        int rows = 0;
-        float totalSecondary = 0;
-        for (int start = 0; start < count;) {
-            int end = start + 1;
-            while (end < count && box.group.types.get(end).profile.tier == box.group.types.get(start).profile.tier) end++;
-            float size = 0;
-            for (int i = start; i < end; i++) size = Math.max(size, cellSecondary(box.group.types.get(i)));
-            totalSecondary += Math.min(size, contentQ) + (rows == 0 ? 0 : tierGap);
-            rows++; start = end;
-        }
-        float rowCursor = 0;
-        int rowIndex = 0;
-        for (int start = 0; start < count; rowIndex++) {
-            int end = start + 1;
-            while (end < count && box.group.types.get(end).profile.tier == box.group.types.get(start).profile.tier) end++;
-            float total = 0, rowHeight = 0;
-            for (int i = start; i < end; i++) {
-                total += Math.min(contentP, cellPrimary(box.group.types.get(i))) + (i == start ? 0 : typeGap);
-                rowHeight = Math.max(rowHeight, cellSecondary(box.group.types.get(i)));
+        float p = 0, q = 0, rowP = 0, rowQ = 0; int tier = -1;
+        for (int i = 0; i < count; i++) {
+            Cell cell = box.cells[i]; cell.bucket = box.group.types.get(i);
+            cell.iconSize = iconPixels(cell.bucket.profile.unit.hitSize, s) * scale;
+            cell.fontScale = 0.65f * cell.iconSize / 24f;
+            cell.showCount = !(s.hideSingles && cell.bucket.count == 1);
+            cell.countWidth = cell.showCount ? measure.width(cell.bucket.countText, cell.fontScale) : 0;
+            cell.naturalWidth = cell.iconSize + (cell.showCount ? cell.countWidth + s.counterGap * scale : 0);
+            cell.naturalHeight = cell.iconSize + 4 * scale;
+            if (cell.bucket.profile.tier != tier) {
+                p = Math.max(p, Math.max(0, rowP - typeGap));
+                q += rowQ + (tier == -1 ? 0 : tierGap);
+                tier = cell.bucket.profile.tier; rowP = rowQ = 0;
             }
-            rowHeight = Math.min(rowHeight, contentQ);
-            float available = contentP;
-            float cursor = Math.max(0, (available - total) / 2f);
+            rowP += (vertical ? cell.naturalHeight : cell.naturalWidth) + typeGap;
+            rowQ = Math.max(rowQ, vertical ? cell.naturalWidth : cell.naturalHeight);
+        }
+        box.needPrimary = Math.max(0, Math.max(p, Math.max(0, rowP - typeGap)) + 2 * pad);
+        box.needSecondary = Math.max(0, q + rowQ + 2 * pad);
+    }
+
+    private void setAreas(Rect body, Rect content, Rect tracking, Box box, ModSettings s) {
+        float inset = Math.min(pad, Math.min(body.width, body.height) / 2);
+        content.set(body.x + inset, body.y + inset, Math.max(0, body.width - 2 * inset), Math.max(0, body.height - 2 * inset));
+        tracking.set(0, 0, 0, 0);
+        float reserve = !s.projection ? 0 : s.internalProjection ? box.reservePrimary : box.trackingCross;
+        if (reserve <= 0) return;
+        switch (projectionSide) {
+            case LEFT -> {
+                float size = Math.min(reserve, content.width);
+                tracking.set(content.x, content.y, size, content.height); content.x += size; content.width -= size;
+            }
+            case RIGHT -> {
+                float size = Math.min(reserve, content.width);
+                tracking.set(content.x + content.width - size, content.y, size, content.height); content.width -= size;
+            }
+            case BOTTOM -> {
+                float size = Math.min(reserve, content.height);
+                tracking.set(content.x, content.y, content.width, size); content.y += size; content.height -= size;
+            }
+            case TOP -> {
+                float size = Math.min(reserve, content.height);
+                tracking.set(content.x, content.y + content.height - size, content.width, size); content.height -= size;
+            }
+        }
+    }
+
+    public void animate(Box box, ModSettings s, boolean editor, boolean hovered, float delta) {
+        boolean collapse = s.collapse && dock != null && !editor;
+        float target = !collapse || (s.hover && hovered) ? 1 : 0;
+        box.expansion = Mathf.approach(box.expansion, target, delta / UpdatePolicy.SLIDE_SECONDS);
+        box.shown.set(box.full);
+        float fullQ = vertical ? box.full.width : box.full.height;
+        float small = Math.min(fullQ, s.projection ?
+            (s.internalProjection ? Math.max(box.reservePrimary, 12 * scale) : box.trackingCross) + 2 * pad : 12 * scale);
+        float q = Mathf.lerp(small, fullQ, box.expansion);
+        if (vertical) { box.shown.width = q; if (crossLow) box.shown.x += fullQ - q; }
+        else { box.shown.height = q; if (crossLow) box.shown.y += fullQ - q; }
+        setAreas(box.shown, box.content, box.projection, box, s);
+    }
+
+    private void prepareCells(Box box, ModSettings settings) {
+        Rect area = box.contentFull;
+        float pSpace = vertical ? area.height : area.width, qSpace = vertical ? area.width : area.height;
+        int rows = 0;
+        float totalQ = 0;
+        for (int start = 0; start < box.cellCount;) {
+            int end = tierEnd(box, start); float q = 0;
+            for (int i = start; i < end; i++) q = Math.max(q, cellQ(box.cells[i]));
+            totalQ += Math.min(q, qSpace) + (rows == 0 ? 0 : tierGap); rows++; start = end;
+        }
+        float rowCursor = 0; int row = 0;
+        for (int start = 0; start < box.cellCount; row++) {
+            int end = tierEnd(box, start); float totalP = 0, rowQ = 0;
             for (int i = start; i < end; i++) {
-                Cell cell = box.cells[i]; cell.bucket = box.group.types.get(i);
-                float pSize = Math.min(contentP, cellPrimary(cell.bucket));
-                float qSize = Math.min(rowHeight, cellSecondary(cell.bucket));
-                float rowPosition = totalSecondary > contentQ && rows > 1 ?
-                    (contentQ - rowHeight) * rowIndex / (rows - 1) : rowCursor;
-                float q = crossFromLow ? rowPosition : contentQ - rowHeight - rowPosition;
-                if (!crossFromLow) q += rowHeight - qSize;
-                float p = total > available && end - start > 1 ?
-                    (available - pSize) * (i - start) / (end - start - 1) : cursor;
-                if (vertical ? !reverse : reverse) p = contentP - p - pSize;
-                // Store offsets in physical coordinates, independent of drawing state.
-                float px = vertical ? q : p, py = vertical ? p : q;
-                float ox = box.full.x + pad, oy = box.full.y + pad;
-                if (centerSide == Side.LEFT) ox += box.projectionSize;
-                if (centerSide == Side.BOTTOM) oy += box.projectionSize;
-                cell.rect.set(ox + px, oy + py, vertical ? qSize : pSize, vertical ? pSize : qSize);
+                totalP += Math.min(cellP(box.cells[i]), pSpace) + (i == start ? 0 : typeGap);
+                rowQ = Math.max(rowQ, cellQ(box.cells[i]));
+            }
+            rowQ = Math.min(rowQ, qSpace);
+            float cursor = Math.max(0, (pSpace - totalP) / 2);
+            float rowPosition = totalQ > qSpace && rows > 1 ? (qSpace - rowQ) * row / (rows - 1) : rowCursor;
+            for (int i = start; i < end; i++) {
+                Cell cell = box.cells[i]; float pSize = Math.min(pSpace, cellP(cell)), qSize = Math.min(rowQ, cellQ(cell));
+                float p = totalP > pSpace && end - start > 1 ? (pSpace - pSize) * (i - start) / (end - start - 1) : cursor;
+                if (vertical ? !reverse : reverse) p = pSpace - p - pSize;
+                float q = crossLow ? rowPosition : qSpace - rowQ - rowPosition + rowQ - qSize;
+                cell.rect.set(area.x + (vertical ? q : p), area.y + (vertical ? p : q),
+                    vertical ? qSize : pSize, vertical ? pSize : qSize);
+                float iconSize = Math.min(cell.iconSize, Math.min(cell.rect.width, cell.rect.height));
+                cell.region = unitIcon(cell.bucket.profile.uiIcon, cell.bucket.profile.fullIcon,
+                    iconSize * pixelRatio, settings.fullIcons);
+                float ratio = cell.region == null ? 1 : (float)Math.max(1, cell.region.width) / Math.max(1, cell.region.height);
+                float iw = ratio >= 1 ? iconSize : iconSize * ratio, ih = ratio >= 1 ? iconSize / ratio : iconSize;
+                cell.icon.set(cell.rect.x + cell.rect.width - iconSize / 2 - iw / 2,
+                    cell.rect.y + (cell.rect.height - ih) / 2, iw, ih);
+                cell.counterRight = cell.icon.x - currentCounterGap;
                 cursor += pSize + typeGap;
             }
-            rowCursor += rowHeight + tierGap;
-            start = end;
+            rowCursor += rowQ + tierGap; start = end;
         }
     }
 
-    private float cellWidth(Bucket bucket) {
-        return (26f + bucket.countText.length() * 8f) * scale;
+    private int tierEnd(Box box, int start) {
+        int end = start + 1;
+        while (end < box.cellCount && box.cells[end].bucket.profile.tier == box.cells[start].bucket.profile.tier) end++;
+        return end;
+    }
+    private float cellP(Cell cell) { return vertical ? cell.naturalHeight : cell.naturalWidth; }
+    private float cellQ(Cell cell) { return vertical ? cell.naturalWidth : cell.naturalHeight; }
+    private float outerCross(float size) { return crossLow ? breadth - size : 0; }
+    private void place(Rect out, float p, float q, float dp, float dq) {
+        if (vertical) out.set(q, reverse ? p : length - p - dp, dq, dp);
+        else out.set(reverse ? length - p - dp : p, q, dp, dq);
     }
 
-    private float cellPrimary(Bucket bucket) { return vertical ? 28f * scale : cellWidth(bucket); }
-    private float cellSecondary(Bucket bucket) { return vertical ? cellWidth(bucket) : 28f * scale; }
-
-    public float projectionPixels(float hitSize, ModSettings settings) {
-        return compressed(hitSize, settings) * projectionScale;
+    public float projectionPixels(float hitSize, ModSettings settings) { return compressed(hitSize, settings) * projectionScale; }
+    public static float compressed(float hitSize, ModSettings s) {
+        if (!Float.isFinite(hitSize) || hitSize <= 0) hitSize = s.baseSize;
+        return Math.max(0.01f, s.baseSize + (hitSize - s.baseSize) * s.compression);
     }
-
-    private boolean projectionAlongPrimary() {
-        return vertical ? centerSide == Side.TOP || centerSide == Side.BOTTOM : centerSide == Side.LEFT || centerSide == Side.RIGHT;
+    public static float iconPixels(float hitSize, ModSettings s) {
+        float size = !Float.isFinite(hitSize) || hitSize <= 0 ? s.baseSize : hitSize;
+        double result = s.iconSize * (s.iconInfluence ? (s.baseSize + ((double)size - s.baseSize) * s.iconCoefficient) / s.baseSize : 1);
+        // Extreme modded hit sizes must not overflow the sums/coordinates of UI cells.
+        return (float)Math.min(1_000_000, result);
     }
-
-    private float outerCross(float size) {
-        return crossFromLow ? breadth - size : 0;
+    public static TextureRegion unitIcon(TextureRegion ui, TextureRegion full, float pixels, boolean enabled) {
+        if (enabled && ui != null && full != null && full.texture != null && full.found() &&
+            pixels > Math.max(ui.width, ui.height) && Math.max(full.width, full.height) > Math.max(ui.width, ui.height))
+            return full;
+        return ui;
     }
-
-    private void place(Rect out, float primary, float secondary, float primarySize, float secondarySize) {
-        if (vertical) out.set(secondary, reverse ? primary : length - primary - primarySize, secondarySize, primarySize);
-        else out.set(reverse ? length - primary - primarySize : primary, secondary, primarySize, secondarySize);
-    }
-
-    public static float compressed(float hitSize, ModSettings settings) {
-        if (!Float.isFinite(hitSize) || hitSize <= 0) hitSize = settings.baseSize;
-        return Math.max(0.01f, settings.baseSize + (hitSize - settings.baseSize) * settings.compression);
-    }
-
     public static Side centerSide(float x, float y, float w, float h, float sw, float sh) {
         float cx = sw / 2, cy = sh / 2;
         float left = distance2(x, y + h / 2, cx, cy), right = distance2(x + w, y + h / 2, cx, cy);
         float bottom = distance2(x + w / 2, y, cx, cy), top = distance2(x + w / 2, y + h, cx, cy);
-        float lateral = Math.min(left, right), longitudinal = Math.min(bottom, top);
-        if (lateral <= longitudinal) return left <= right ? Side.LEFT : Side.RIGHT;
-        return bottom <= top ? Side.BOTTOM : Side.TOP;
+        return Math.min(left, right) <= Math.min(bottom, top) ? (left <= right ? Side.LEFT : Side.RIGHT) :
+            (bottom <= top ? Side.BOTTOM : Side.TOP);
     }
-
     public static Side dock(float x, float y, float w, float h, float sw, float sh, float tolerance) {
-        if (x <= tolerance) return Side.LEFT;
-        if (sw - x - w <= tolerance) return Side.RIGHT;
-        if (y <= tolerance) return Side.BOTTOM;
-        if (sh - y - h <= tolerance) return Side.TOP;
-        return null;
+        if (x <= tolerance) return Side.LEFT; if (sw - x - w <= tolerance) return Side.RIGHT;
+        if (y <= tolerance) return Side.BOTTOM; if (sh - y - h <= tolerance) return Side.TOP; return null;
     }
-
-    private static float distance2(float x, float y, float cx, float cy) {
-        return (x - cx) * (x - cx) + (y - cy) * (y - cy);
-    }
+    private static float distance2(float x, float y, float cx, float cy) { return (x - cx) * (x - cx) + (y - cy) * (y - cy); }
 }

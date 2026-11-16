@@ -14,6 +14,9 @@ import arc.scene.ui.Dialog;
 import arc.scene.ui.CheckBox;
 import arc.scene.ui.TextField;
 import arc.scene.ui.ScrollPane;
+import arc.scene.ui.ImageButton;
+import arc.scene.ui.Label;
+import arc.scene.ui.Tooltip;
 import arc.math.geom.Vec2;
 import arc.struct.IntSeq;
 import arc.struct.Seq;
@@ -62,15 +65,17 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                     }
                 }
                 case 2 -> {
-                    verifyEditor(); screenshot("02-editor.png"); hud.openUnits(); stage++; frames = 0;
+                    if (frames++ == 60) { verifyEditor(); return; }
+                    screenshot("02-editor.png"); hud.openUnits(); stage++; frames = 0;
                 }
                 case 3 -> {
-                    verifyUnitFields();
+                    if (frames++ == 60) { verifyUnitFields(); return; }
                     screenshot("03-unit-settings.png");
-                    hud.toggleEditor(); hud.settings.collapse = true; hud.changed(); stage++; frames = 0;
+                    hud.toggleEditor(); Vars.control.input.commandMode = true;
+                    hud.settings.setCollapse(true); hud.changed(); stage++; frames = 0;
                 }
                 case 4 -> {
-                    screenshot("04-collapsed.png"); hud.settings.vertical = false; hud.settings.collapse = false;
+                    screenshot("04-collapsed.png"); hud.settings.vertical = false; hud.settings.setCollapse(false);
                     hud.settings.xFraction = 0.5f; hud.settings.yFraction = 0; hud.changed(); stage++; frames = 0;
                 }
                 case 5 -> {
@@ -81,12 +86,33 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                 }
                 case 6 -> {
                     screenshot("06-reverse-extended.png");
+                    hud.settings.vertical = true; hud.settings.reverse = false; hud.settings.internalProjection = true;
+                    hud.changed(); stage++; frames = 0;
+                }
+                case 7 -> {
+                    screenshot("07-internal.png");
+                    require(hud.layout.projectionReserved > 0 &&
+                        (hud.layout.projectionSide == HudLayout.Side.TOP || hud.layout.projectionSide == HudLayout.Side.BOTTOM),
+                        "Internal projections did not reserve longitudinal space");
+                    require(Core.gl.glGetError() == 0, "OpenGL error after internal projection drawing");
+                    Core.graphics.setWindowSize(640, 480);
+                    hud.toggleEditor(); stage++; frames = 0;
+                }
+                case 8 -> {
+                    require(Core.scene.getWidth() == 640 && Core.scene.getHeight() == 480,
+                        "Client did not apply the 640x480 window resize");
+                    Core.graphics.setWindowSize(320, 240); stage++; frames = 0;
+                }
+                case 9 -> {
+                    if (frames++ == 60) { verifySmallEditor(); return; }
+                    screenshot("08-small-editor.png");
                     Vars.logic.reset(); require(hud.model.observedUnits() == 0, "World reset did not clear observations");
                     report(); Core.app.exit();
                 }
                 default -> throw new AssertionError("Unknown stage");
             }
         } catch (Throwable exception) {
+            screenshot("FAILED.png");
             reports.child("FAILED.txt").writeString(arc.util.Strings.getStackTrace(exception));
             exception.printStackTrace();
             System.exit(2);
@@ -106,7 +132,8 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
             require(mindustry.gen.Icon.icons.containsKey(icon), "Missing editor icon: " + icon);
         }
         hud.settings.vertical = true; hud.settings.reverse = false; hud.settings.projection = true;
-        hud.settings.collapse = false; hud.settings.xFraction = 0; hud.settings.yFraction = 0.5f;
+        hud.settings.collapseCommand = hud.settings.collapseBuild = false;
+        hud.settings.showBuild = false; hud.settings.xFraction = 0; hud.settings.yFraction = 0.5f;
         hud.settings.length = 640; hud.settings.breadth = 240; hud.settings.advanced = false;
         Core.settings.put("fpscap", 0);
         Core.settings.put("effects", false);
@@ -147,11 +174,18 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         require(hud.visible && !Vars.control.input.locked(), "HUD unavailable: visible=" + hud.visible +
             " command=" + Vars.control.input.commandMode + " game=" + Vars.state.isGame() +
             " shown=" + Vars.ui.hudfrag.shown() + " dialog=" + Core.scene.hasDialog());
-        long updates = hud.model.reconciliations;
+        require(!hud.model.telemetry && hud.model.reconciliations == 0 && hud.drawNanos == 0,
+            "Closed telemetry collected diagnostics");
+        int observed = hud.model.observedUnits();
         Vars.control.input.commandMode = false; Core.scene.act(1f / 60f);
-        require(!hud.visible && hud.model.reconciliations == updates, "Hidden HUD kept scanning units");
+        require(!hud.visible, "Disabled building HUD remained visible");
+        Unit hiddenAddition = UnitTypes.dagger.spawn(Team.sharded, 180, 180);
+        Vars.control.input.controlGroups[9].add(hiddenAddition.id);
+        Core.scene.act(1f / 60f);
+        require(hud.model.observedUnits() == observed, "Hidden HUD kept scanning units");
         Vars.control.input.commandMode = true; Core.scene.act(1f / 60f);
-        require(hud.visible && hud.model.reconciliations > updates, "HUD did not resume after command mode was restored");
+        require(hud.visible && hud.model.observedUnits() == observed + 1, "HUD did not resume after command mode was restored");
+        hud.settings.showBuild = true; hud.changed();
         Rect group = hud.layout.boxes[0].shown;
         Core.camera.position.set(300, 300);
         click(group.x + 1, group.y + 1);
@@ -170,6 +204,12 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         require(Vars.control.input.selectedUnits.size == 1 &&
             Vars.control.input.selectedUnits.first() == hud.model.groups[0].representative.unit, "Projection click selected wrong unit");
         require(hud.hit(-10, -10, true) == null, "HUD intercepted input outside its controls");
+        for (var box : hud.layout.boxes) if (box.visible) for (int i = 0; i < box.cellCount; i++) {
+            var c = box.cells[i]; var ui = c.bucket.profile.uiIcon;
+            if (ui != null && Math.max(c.icon.width, c.icon.height) * hud.layout.pixelRatio <= Math.max(ui.width, ui.height))
+                require(c.region == ui, "A clipped small icon unnecessarily uses fullIcon");
+        }
+        verifyBuildingSelection(group);
         float color = Draw.getColorPacked(), mix = Draw.getMixColorPacked();
         float stroke = Lines.getStroke(), xs = Draw.xscl, ys = Draw.yscl, z = Draw.z();
         var blend = Draw.getBlend(); var shader = Draw.getShader();
@@ -179,6 +219,22 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         require(Lines.getStroke() == stroke && Draw.xscl == xs && Draw.yscl == ys && Draw.z() == z &&
             Draw.getBlend() == blend && Draw.getShader() == shader && Arrays.equals(transform, Draw.trans().val) &&
             Arrays.equals(projectionMatrix, Draw.proj().val), "HUD leaked renderer state");
+    }
+
+    private void verifySmallEditor() {
+        Element editor = Core.scene.find("control-groups-editor");
+        require(Core.scene.getWidth() == 320 && Core.scene.getHeight() == 240 && editor.visible &&
+            editor.getWidth() <= 320 && editor.getHeight() <= 240, "Small-window editor bounds are incorrect");
+        fireButton("cg.section.advanced-settings"); fireButton("cg.section.projection-settings");
+        Element toggle = Core.scene.find("cg.toggle.manual-largest");
+        Element field = Core.scene.find("cg.value.manual-size");
+        showElement(field);
+        Vec2 switchPos = toggle.localToStageCoordinates(new Vec2());
+        Vec2 fieldPos = field.localToStageCoordinates(new Vec2());
+        require(fieldPos.y + field.getHeight() <= switchPos.y + .01f, "Narrow combined row did not wrap the numeric field");
+        Seq<Element> controls = new Seq<>(); collect(editor, controls);
+        for (Element e : controls) if (e instanceof ScrollPane scroll)
+            require(scroll.getWidget().getWidth() <= scroll.getScrollWidth() + .01f, "Small editor overflows horizontally");
     }
 
     private void verifyEditor() {
@@ -193,9 +249,42 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         }
         require(settingsScroll != null, "Editor scroll pane is missing");
         float oldScroll = settingsScroll.getScrollY();
-        for (Element element : controls) if (element instanceof CheckBox check) {
-            require(check.getWidth() <= editor.getWidth() && check.getLabel().getWidth() > 0, "Editor label overflow");
-        }
+        for (Element element : controls) if (element instanceof CheckBox check)
+            require(check.getWidth() <= editor.getWidth(), "Editor switch overflow");
+        verifyTooltipsAndResets(controls);
+        // A real DesktopInput update clears commandMode when a field owns keyboard focus.
+        fireButton("cg.section.group-icon-settings");
+        for (int i = 0; i < 20; i++) Core.scene.act(.02f);
+        editor.validate();
+        TextField field = (TextField)Core.scene.find("cg.value.icon-size");
+        hud.settings.showBuild = false; hud.changed();
+        Core.scene.act(1f / 60f); showElement(field);
+        Vec2 fieldPoint = field.localToStageCoordinates(new Vec2(field.getWidth() / 2, field.getHeight() / 2));
+        nativeSceneClick(fieldPoint.x, fieldPoint.y, false);
+        Vars.control.input.update(); Core.scene.act(1f / 60f);
+        require(!Vars.control.input.commandMode && hud.visible && hud.editing && editor.visible &&
+            Core.scene.getKeyboardFocus() == field && hud.settings.commandContext(), "Editing lost focus or its mode context");
+        field.selectAll(); Core.scene.keyTyped('4'); Core.scene.keyTyped('8');
+        require(hud.settings.iconSize == 48, "Keyboard editing did not reach the numeric setting");
+        fireButton("cg.reset.icon-size");
+        require(hud.settings.iconSize == 36 && field.getText().equals("36"),
+            "Editor reset did not apply default: " + hud.settings.iconSize + "/" + field.getText());
+        Core.scene.setKeyboardFocus(null);
+        fireButton("cg.section.telemetry"); Core.scene.act(.02f);
+        require(hud.model.telemetry && hud.layout.telemetry, "Expanded telemetry did not enable diagnostics");
+        hud.model.reconcile(Vars.control.input.controlGroups, id -> mindustry.gen.Groups.unit.getByID(id),
+            Team.sharded.data().units, Team.sharded, true);
+        long updates = hud.model.reconciliations;
+        require(updates > 0, "Telemetry counters are not collected when enabled");
+        verifyGeometryInvalidation();
+        fireButton("cg.section.telemetry");
+        long closedUpdates = hud.model.reconciliations;
+        Core.scene.act(.02f);
+        hud.model.reconcile(Vars.control.input.controlGroups, id -> mindustry.gen.Groups.unit.getByID(id),
+            Team.sharded.data().units, Team.sharded, true);
+        require(!hud.model.telemetry && hud.model.reconciliations == closedUpdates, "Collapsed telemetry still collected counters");
+        hud.settings.showBuild = true; hud.changed();
+        settingsScroll.setScrollY(0); settingsScroll.updateVisualScroll();
         float oldX = hud.settings.xFraction, oldY = hud.settings.yFraction, oldBreadth = hud.settings.breadth;
         Element move = Core.scene.find("cg.editor.move");
         require(move != null, "Move control is missing");
@@ -224,15 +313,148 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         require(panel != null && panel.visible, "Unit settings did not open");
         Seq<Element> controls = new Seq<>(); collect(panel, controls);
         int colors = 0;
+        verifyTooltipsAndResets(controls);
         GlyphLayout glyph = new GlyphLayout();
         for (Element element : controls) if (element instanceof TextField field && field.getText().startsWith("#")) {
             glyph.setText(field.getStyle().font, "#FFFFFF");
             var background = field.getStyle().background;
             float padding = background == null ? 0 : background.getLeftWidth() + background.getRightWidth();
             require(field.getWidth() >= glyph.width + padding + 2, "Color field does not fit seven characters");
+            String typeName = field.name.substring("cg.value.unit.".length(), field.name.length() - ".color".length());
+            require(field.getStyle().fontColor.equals(hud.profiles.get(Vars.content.unit(typeName)).color), "Color field text is not tinted");
             colors++;
         }
-        require(colors > 0, "No unit color controls were built");
+        require(colors == Vars.content.units().size, "Not every registered unit is available in settings");
+        boolean detailed = false;
+        for (var profile : hud.profiles.all) {
+            var ui = profile.uiIcon; var full = profile.fullIcon;
+            if (ui == null || full == null || Math.max(full.width, full.height) <= Math.max(ui.width, ui.height)) continue;
+            float threshold = Math.max(ui.width, ui.height);
+            require(HudLayout.unitIcon(ui, full, threshold, true) == ui &&
+                HudLayout.unitIcon(ui, full, threshold + 1, true) == full &&
+                HudLayout.unitIcon(ui, full, threshold + 1, false) == ui &&
+                HudLayout.unitIcon(ui, Core.atlas.find("error"), 10000, true) == ui, "Icon resolution fallback is incorrect");
+            detailed = true; break;
+        }
+        require(detailed, "No detailed unit texture was tested");
+        for (var type : new mindustry.type.UnitType[]{UnitTypes.alpha, UnitTypes.beta, UnitTypes.gamma,
+            UnitTypes.evoke, UnitTypes.incite, UnitTypes.emanate}) require(hud.profiles.get(type).banned, "Core avatar is not banned: " + type.name);
+        int saved = Vars.control.input.controlGroups[0].size;
+        fireButton("cg.ban.dagger"); Core.scene.act(.02f);
+        require(hud.profiles.get(UnitTypes.dagger).banned && hud.model.groups[0].types.size == 1,
+            "Ban did not immediately remove type from model");
+        require(Vars.control.input.controlGroups[0].size == saved, "Ban mutated native groups");
+        fireButton("cg.ban.dagger"); Core.scene.act(.02f);
+        require(!hud.profiles.get(UnitTypes.dagger).banned && hud.model.groups[0].types.size == 2, "Unban did not restore model");
+        var p = hud.profiles.get(UnitTypes.dagger);
+        p.color.set(arc.graphics.Color.red); p.tier = 99; p.order = 99; p.resize = 2; hud.profileChanged(p);
+        for (String key : new String[]{"color", "tier", "type", "resize"}) fireButton("cg.reset.unit.dagger." + key);
+        require(p.color.equals(p.defaultColor) && p.tier == p.defaultTier && p.order == p.defaultOrder && p.resize == 1,
+            "Per-type reset did not restore actual defaults");
+    }
+
+    private void verifyGeometryInvalidation() {
+        try {
+            var members = GroupsHud.class.getDeclaredField("membershipAt"); members.setAccessible(true);
+            var states = GroupsHud.class.getDeclaredField("stateAt"); states.setAccessible(true);
+            double nextMembers = members.getDouble(hud), nextStates = states.getDouble(hud);
+            float gap = hud.settings.groupGap;
+            long beforeMembers = hud.model.reconciliations, beforeStates = hud.model.stateUpdates, beforeLayout = hud.layout.rebuilds;
+            try {
+                members.setDouble(hud, 1e12); states.setDouble(hud, 1e12);
+                hud.settings.groupGap = gap + 1; hud.changed(); Core.scene.act(.01f);
+                require(hud.layout.rebuilds > beforeLayout && hud.model.reconciliations == beforeMembers &&
+                    hud.model.stateUpdates == beforeStates, "Geometry edit triggered unnecessary unit collection");
+            } finally {
+                members.setDouble(hud, nextMembers); states.setDouble(hud, nextStates);
+                hud.settings.groupGap = gap; hud.changed();
+            }
+        } catch (ReflectiveOperationException exception) { throw new AssertionError(exception); }
+    }
+
+    private void verifyBuildingSelection(Rect group) {
+        Vars.player.unit(UnitTypes.alpha.spawn(Team.sharded, 600, 600));
+        require(!Vars.player.dead() && Vars.player.isBuilder(), "Placement fixture has no living builder");
+        Vars.control.input.commandMode = false; Core.scene.act(1f / 60f);
+        require(hud.visible, "Building HUD did not appear when enabled");
+        Vars.control.input.block = Blocks.copperWall;
+        int plans = Vars.player.unit().plans.size;
+        nativeSceneClick(hud.x + group.x + 1, hud.y + group.y + 1, true);
+        require(Vars.control.input.selectedUnits.size == 2 && Vars.control.input.commandMode,
+            "Building click did not select and enter command mode");
+        require(Vars.control.input.block == null && Vars.player.unit().plans.size == plans,
+            "Building click also placed or queued a block");
+        require(!Core.settings.getBool("commandmodehold"), "HUD changed the native command preference");
+    }
+
+    /** Move only the fixture's SDL coordinates, never the operating-system cursor. */
+    private void nativeSceneClick(float stageX, float stageY, boolean updateInput) {
+        try {
+            var fx = Core.input.getClass().getDeclaredField("mouseX"); fx.setAccessible(true);
+            var fy = Core.input.getClass().getDeclaredField("mouseY"); fy.setAccessible(true);
+            int oldX = fx.getInt(Core.input), oldY = fy.getInt(Core.input);
+            Vec2 screen = Core.scene.getViewport().project(new Vec2(stageX, stageY));
+            int sx = Math.round(screen.x), sy = Math.round(screen.y);
+            try {
+                fx.setInt(Core.input, sx); fy.setInt(Core.input, sy);
+                Core.scene.mouseMoved(sx, sy); Core.scene.act(1f / 60f);
+                require(Core.scene.hasMouse(), "Scene did not recognize the HUD under the mouse");
+                Core.input.getKeyboard().keyDown(KeyCode.mouseLeft);
+                require(Core.scene.touchDown(sx, sy, 0, KeyCode.mouseLeft), "HUD down event was not consumed");
+                if (updateInput) Vars.control.input.update();
+                Core.input.getKeyboard().postUpdate(); Core.input.getKeyboard().keyUp(KeyCode.mouseLeft);
+                require(Core.scene.touchUp(sx, sy, 0, KeyCode.mouseLeft), "HUD up event was not consumed");
+                if (updateInput) Vars.control.input.update();
+            } finally {
+                Core.input.getKeyboard().keyUp(KeyCode.mouseLeft); Core.input.getKeyboard().postUpdate();
+                fx.setInt(Core.input, oldX); fy.setInt(Core.input, oldY);
+                Core.scene.mouseMoved(oldX, oldY);
+            }
+        } catch (ReflectiveOperationException exception) { throw new AssertionError(exception); }
+    }
+
+    private static void verifyTooltipsAndResets(Seq<Element> controls) {
+        for (Element element : controls) {
+            if (element instanceof TextField && element.name != null && element.name.startsWith("cg.value."))
+                require(Core.scene.find("cg.reset." + element.name.substring("cg.value.".length())) instanceof ImageButton,
+                    "Field has no reset: " + element.name);
+            for (var listener : element.getListeners()) if (listener instanceof Tooltip tooltip) {
+                require(tooltip.getContainer().getBackground() == null, "Tooltip still has a background");
+                for (Element child : tooltip.getContainer().getChildren()) if (child instanceof Label label)
+                    require(label.color.equals(arc.graphics.Color.lightGray), "Tooltip color differs from native help");
+            }
+        }
+    }
+
+    private static void fireButton(String name) {
+        Element actor = Core.scene.find(name); require(actor != null, "Missing button: " + name);
+        showElement(actor);
+        Vec2 point = actor.localToStageCoordinates(new Vec2(actor.getWidth() / 2, actor.getHeight() / 2));
+        Element hit = Core.scene.hit(point.x, point.y, true);
+        // A narrow HUD's resize edge may cross the middle of its wider editor header.
+        for (float fraction : new float[]{.1f, .9f, .25f, .75f}) {
+            if (hit != null && hit.isDescendantOf(actor)) break;
+            point = actor.localToStageCoordinates(new Vec2(actor.getWidth() * fraction, actor.getHeight() / 2));
+            hit = Core.scene.hit(point.x, point.y, true);
+        }
+        require(hit != null && hit.isDescendantOf(actor), "Button is not reachable: " + name + " hit=" + hit);
+        fire(actor, InputEvent.InputEventType.touchDown, point.x, point.y);
+        fire(actor, InputEvent.InputEventType.touchUp, point.x, point.y);
+    }
+
+    private static void showElement(Element actor) {
+        for (int i = 0; i < 12; i++) Core.scene.act(.02f);
+        for (int pass = 0; pass < 3; pass++) {
+            Core.scene.draw();
+            for (Element parent = actor.parent; parent != null; parent = parent.parent) if (parent instanceof ScrollPane scroll) {
+                scroll.validate();
+                Vec2 location = actor.localToAscendantCoordinates(scroll.getWidget(), new Vec2());
+                scroll.scrollTo(location.x, location.y, actor.getWidth(), actor.getHeight(), true, true);
+                scroll.updateVisualScroll();
+            }
+        }
+        // Arc updates the scrolled widget's position during draw(), not during validate().
+        Core.scene.draw();
     }
 
     private static void collect(Element element, Seq<Element> result) {
@@ -264,10 +486,16 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
     private void report() {
         Arrays.sort(baseline); Arrays.sort(enabled);
         reports.child("result.txt").writeString(String.format(Locale.ROOT,
-            "Mindustry %s, %s%nActual hidden SDL/OpenGL client, 1000 stationary units.%n" +
+            "Mindustry %s, %s%nActual hidden SDL/OpenGL client, 1000 initially spawned units; no movement/combat orders, physics enabled.%n" +
             "Baseline update+render median/p95: %.3f/%.3f ms%nHUD update+render median/p95: %.3f/%.3f ms%n" +
             "Selection: group single/double, type, projection PASS%nHide/resume without hidden scans: PASS%n" +
-            "Editor move/clamp, edge resize and label bounds: PASS%nUnit color field width: PASS%nWorld reset: PASS%nRenderer state restore: PASS%n" +
+            "Editor move/clamp, edge resize, field focus/keyboard input/reset: PASS%n" +
+            "Building selection/native input/block placement prevention: PASS%n" +
+            "Telemetry off/on/off, reset buttons and background-free tooltips: PASS%n" +
+            "Geometry edits reuse game data; detailed icon threshold/fallback: PASS%n" +
+            "Internal projection/OpenGL and actual 640x480/320x240 windows: PASS%n" +
+            "All unit rows, avatar bans, ban/unban and per-type resets: PASS%n" +
+            "Unit color field width/tint: PASS%nWorld reset: PASS%nRenderer state restore: PASS%n" +
             "This is an automated sandbox run, not a multiplayer or interactive gameplay test.%n",
             Version.buildString(), Core.graphics.getGLVersion(), baseline[120] / 1e6, baseline[228] / 1e6,
             enabled[120] / 1e6, enabled[228] / 1e6));

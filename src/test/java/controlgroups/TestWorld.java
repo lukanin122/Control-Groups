@@ -36,6 +36,7 @@ final class TestWorld {
         }
         profiles = new UnitProfiles(store, types);
         model = new GroupModel(profiles, types);
+        model.telemetry = true;
     }
 
     FakeUnit add(int id, int type) {
