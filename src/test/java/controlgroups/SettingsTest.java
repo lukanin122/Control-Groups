@@ -119,9 +119,10 @@ public class SettingsTest {
         assertEquals(48, settings.breadth, 0);
         settings.xFraction = 0.75f; settings.changed();
         assertEquals(0.75f, new ModSettings(store).xFraction, 0);
-        settings.compression = 0; settings.changed();
+        settings.compression = 0; settings.occupancy = 0; settings.changed();
         ModSettings compressed = new ModSettings(store);
         assertEquals(0, compressed.compression, 0);
+        assertEquals(0, compressed.occupancy, 0);
         assertEquals(compressed.baseSize, HudLayout.compressed(100, compressed), 0);
     }
 }

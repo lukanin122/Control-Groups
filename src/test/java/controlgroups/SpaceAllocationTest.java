@@ -33,7 +33,7 @@ public class SpaceAllocationTest {
                     assertTrue(structural <= layout.structuralBudget + .003);
                     assertEquals(layout.projectionReserved, reserved, .003);
                     assertTrue(layout.usedPrimary <= layout.availablePrimary + .003);
-                    assertTrue(Float.isFinite(layout.projectionScale) && layout.projectionScale >= 0);
+                    assertTrue(Double.isFinite(layout.projectionScale) && layout.projectionScale >= 0);
                 }
     }
 
@@ -85,7 +85,7 @@ public class SpaceAllocationTest {
     }
 
     @Test
-    public void externalSquareExtendsOnlyCrosswiseAndDoesNotChangeFitOrFrame() {
+    public void externalSquareExtendsOnlyCrosswiseAndItsRealSpaceCanIncreaseFit() {
         TestWorld w = new TestWorld(5);
         for (int i = 0; i < 5; i++) { w.add(i + 1, i); w.profiles.get(w.types.get(i)).tier = 10; }
         w.group(0, 1, 2, 3, 4, 5); w.reconcile(false);
@@ -95,12 +95,13 @@ public class SpaceAllocationTest {
             w.settings.vertical = direction < 2; w.settings.reverse = direction % 2 == 1;
             w.settings.minTrackingSquare = false;
             l.rebuild(w.settings, w.profiles, 1920, 1080, 1, false);
-            float fit = l.projectionScale, p = l.boxes[0].primary;
+            double fit = l.projectionScale;
+            float p = l.boxes[0].primary;
             float width = l.width, height = l.height;
             w.settings.minTrackingSquare = true;
             l.rebuild(w.settings, w.profiles, 1920, 1080, 1, false);
             var box = l.boxes[0];
-            assertEquals(fit, l.projectionScale, 0); assertEquals(p, box.primary, 0);
+            assertTrue(l.projectionScale > fit); assertEquals(p, box.primary, 0);
             assertEquals(width, l.width, 0); assertEquals(height, l.height, 0);
             assertEquals(box.projection.width, box.projection.height, .001);
             assertTrue(box.secondary > l.breadth);
@@ -115,7 +116,8 @@ public class SpaceAllocationTest {
         for (boolean internal : new boolean[]{false, true}) {
             w.settings.internalProjection = internal; w.settings.manualLargestSize = 100;
             l.rebuild(w.settings, w.profiles, 1920, 1080, 1, false);
-            float first = l.projectionScale, reserve = l.projectionReserved;
+            double first = l.projectionScale;
+            float reserve = l.projectionReserved;
             Rect before = new Rect(l.boxes[0].full);
             w.settings.manualLargestSize = 1000;
             l.rebuild(w.settings, w.profiles, 1920, 1080, 1, false);

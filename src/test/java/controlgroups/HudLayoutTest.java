@@ -38,7 +38,7 @@ public class HudLayoutTest {
         HudLayout layout = new HudLayout(w.model);
         layout.rebuild(w.settings, w.profiles, 1000, 800, 1, false);
         Rect before = new Rect(layout.boxes[0].full);
-        float scale = layout.projectionScale;
+        double scale = layout.projectionScale;
         w.profiles.get(w.types.get(0)).resize = 20;
         layout.rebuild(w.settings, w.profiles, 1000, 800, 1, false);
         assertEquals(before, layout.boxes[0].full);
@@ -60,7 +60,9 @@ public class HudLayoutTest {
             layout.rebuild(w.settings, w.profiles, 320, 240, scale, false);
             assertEquals(11, layout.orderCount); assertEquals(10, layout.order[0]);
             for (int i = 0; i < 20; i++) layout.animate(layout.boxes[0], w.settings, false, false, 0.1f);
-            assertRectIn(layout.boxes[0].shown, layout.width, layout.height);
+            Rect shown = layout.boxes[0].shown;
+            // The default external square may now grow beyond the editable frame toward the centre.
+            assertRectIn(new Rect(shown.x + layout.positionX, shown.y + layout.positionY, shown.width, shown.height), 320, 240);
             assertEquals(0, layout.boxes[0].expansion, 0.001f);
             for (int i = 0; i < 20; i++) layout.animate(layout.boxes[0], w.settings, false, true, 0.1f);
             assertEquals(1, layout.boxes[0].expansion, 0.001f);

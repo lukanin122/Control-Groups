@@ -41,10 +41,13 @@ public final class UnitProfiles {
         public final Color defaultColor = new Color();
         public boolean defaultBanned;
         public TextureRegion uiIcon, fullIcon;
+        public double projectionRadius, advancedProjectionRadius;
 
         private Profile(UnitType unit) {
             this.unit = unit;
             uiIcon = unit.uiIcon; fullIcon = unit.fullIcon;
+            projectionRadius = ProjectionBounds.radius(unit, false);
+            advancedProjectionRadius = ProjectionBounds.radius(unit, true);
         }
     }
 

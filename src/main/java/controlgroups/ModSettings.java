@@ -56,7 +56,7 @@ public final class ModSettings {
         absoluteX = number("absolute-x", 0, 0, 32768); absoluteY = number("absolute-y", 0, 0, 32768);
         baseSize = number("base", baseSize, 0.01f, 4096);
         compression = number("compression", compression, 0, 1);
-        occupancy = number("occupancy", occupancy, 0.01f, 1);
+        occupancy = number("occupancy", occupancy, 0, 1);
         zeroGap = number("zero-gap", zeroGap, 0, 1000); groupGap = number("group-gap", groupGap, 0, 1000);
         tierGap = number("tier-gap", tierGap, 0, 1000); typeGap = number("type-gap", typeGap, 0, 1000);
         counterGap = number("counter-gap", counterGap, 0, 1000);

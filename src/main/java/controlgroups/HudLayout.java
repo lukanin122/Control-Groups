@@ -8,6 +8,8 @@ import controlgroups.GroupModel.Group;
 
 /** Geometry works on prepared buckets, never on live unit collections. P = longitudinal, Q = transverse. */
 public final class HudLayout {
+    public static final float BORDER = 4f;
+    private static final float RASTER_MARGIN = 1f;
     public enum Side { LEFT, RIGHT, BOTTOM, TOP }
     @FunctionalInterface public interface CounterMeasure { float width(String text, float fontScale); }
 
@@ -25,11 +27,13 @@ public final class HudLayout {
         public final Group group;
         public final Rect full = new Rect(), shown = new Rect(), guide = new Rect();
         public final Rect projection = new Rect(), content = new Rect(), contentFull = new Rect();
+        public final Rect projectionFull = new Rect(), projectionUsable = new Rect();
         public Cell[] cells = new Cell[0];
         public int cellCount;
         public float primary, secondary, structurePrimary, reservePrimary, needPrimary, needSecondary;
-        public float trackingCross, projectionSize, expansion = 1f;
+        public float trackingCross, projectionFitSpan, expansion = 1f;
         public boolean visible;
+        private double projectionExtent;
         private Box(Group group) { this.group = group; }
     }
 
@@ -41,14 +45,16 @@ public final class HudLayout {
     private final float[] allocated = new float[GroupModel.GROUPS];
     private final CounterMeasure measure;
     public int orderCount, activeCount;
-    public float width, height, length, breadth, maxPrimary, scale, zeroSize, projectionScale;
+    public float width, height, length, breadth, maxPrimary, scale, zeroSize;
+    public float projectionSpan;
+    public double projectionScale, projectionSafety;
     public float availablePrimary, projectionReserved, structuralBudget, usedPrimary;
     public float positionX, positionY, minX, minY, maxX, maxY, pixelRatio = 1;
     public Side centerSide = Side.RIGHT, projectionSide = Side.RIGHT, dock;
     public long rebuilds;
     public boolean telemetry;
     private boolean vertical, reverse, crossLow, alongLow;
-    private float pad, typeGap, tierGap, trackingBase, currentCounterGap;
+    private float pad, typeGap, tierGap, currentCounterGap;
 
     public HudLayout(GroupModel model) { this(model, (text, size) -> text.length() * 12f * size); }
 
@@ -81,7 +87,7 @@ public final class HudLayout {
         activeCount = 0;
         for (Box box : boxes) {
             box.visible = !box.group.empty() && (box.group.index != GroupModel.UNASSIGNED || s.unassigned);
-            box.primary = box.reservePrimary = box.trackingCross = 0;
+            box.primary = box.reservePrimary = box.trackingCross = box.projectionFitSpan = 0;
             prepareNatural(box, s);
         }
         for (int i = 0; i < orderCount; i++) if (boxes[order[i]].visible) active[activeCount++] = order[i];
@@ -89,15 +95,23 @@ public final class HudLayout {
         float gap = Math.min(s.groupGap * scale, Math.max(0, length - zeroSize - zeroGap) / Math.max(1, orderCount * 3));
         availablePrimary = Math.max(0, length - zeroSize - zeroGap - Math.max(0, activeCount - 1) * gap);
         maxPrimary = Math.max(0, (length - zeroSize - zeroGap - (orderCount - 1) * gap) / orderCount);
-        int divisor = s.spaceMode == ModSettings.SpaceMode.LIMITED ? orderCount : Math.max(1, activeCount);
-        // Reserved independently of final structural allocations. A manual largest override never changes this reserve.
-        float nominal = Math.max(0, availablePrimary / divisor - 2 * pad);
-        trackingBase = s.projection ? Math.min(compressed(profiles.largestHitSize, s) * scale / s.occupancy,
-            Math.max(0, Math.min(nominal, breadth - 2 * pad))) : 0;
+        Box free = boxes[GroupModel.UNASSIGNED];
+        boolean residual = free.visible && s.freeSpaceMode == ModSettings.FreeSpaceMode.RESIDUAL;
+        float nominal = availablePrimary / Math.max(1, activeCount);
         float minimumSum = 0;
-        for (int i = 0; i < activeCount; i++) minimumSum += Math.min(24 * scale, boxes[active[i]].needPrimary);
-        float reserve = s.internalProjection ? Math.min(trackingBase,
-            Math.max(0, availablePrimary - minimumSum) / Math.max(1, activeCount)) : 0;
+        for (int i = 0; i < activeCount; i++) {
+            int id = active[i];
+            nominal = Math.min(nominal, fullCap(id, s, residual));
+            minimumSum += Math.min(24 * scale, boxes[id].needPrimary);
+        }
+        // Geometry owns the reserve. No hitSize, compression, occupancy, manual Hmax or resize enters it.
+        float reserve = s.projection && s.internalProjection ? Math.min(Math.max(0, breadth - 2 * pad), nominal / 2) : 0;
+        reserve = Math.min(reserve, Math.max(0, availablePrimary - minimumSum) / Math.max(1, activeCount));
+        if (residual && activeCount > 1) {
+            float otherMinimum = minimumSum - Math.min(24 * scale, free.needPrimary);
+            float freeMinimum = Math.min(s.freeMinimum * scale, length / 3);
+            reserve = Math.min(reserve, Math.max(0, availablePrimary - otherMinimum - freeMinimum) / (activeCount - 1));
+        }
         projectionReserved = reserve * activeCount;
         structuralBudget = Math.max(0, availablePrimary - projectionReserved);
         for (int i = 0; i < activeCount; i++) {
@@ -105,19 +119,11 @@ public final class HudLayout {
             box.reservePrimary = reserve;
             needs[id] = box.needPrimary;
             floors[id] = Math.min(24 * scale, needs[id]);
-            float cap = switch (s.spaceMode) {
-                case LIMITED -> availablePrimary / orderCount;
-                case EQUAL -> availablePrimary / Math.max(1, activeCount);
-                case PROPORTIONAL -> Float.MAX_VALUE;
-            };
-            if (id == GroupModel.UNASSIGNED && s.freeSpaceMode == ModSettings.FreeSpaceMode.LIMITED)
-                cap = availablePrimary / orderCount;
+            float cap = fullCap(id, s, residual);
             needs[id] = Math.min(needs[id], Math.max(0, cap - reserve));
             floors[id] = Math.min(floors[id], needs[id]);
             allocated[id] = 0;
         }
-        Box free = boxes[GroupModel.UNASSIGNED];
-        boolean residual = free.visible && s.freeSpaceMode == ModSettings.FreeSpaceMode.RESIDUAL;
         if (residual) {
             int id = GroupModel.UNASSIGNED;
             float totalMinimum = Math.min(s.freeMinimum * scale, length / 3);
@@ -126,7 +132,7 @@ public final class HudLayout {
             needs[id] = floors[id];
         }
         allocate(structuralBudget, residual);
-        float fitSpan = Float.MAX_VALUE, commonQ = zeroSize;
+        float commonQ = zeroSize;
         float screenQ = vertical ? sw : sh;
         for (int i = 0; i < activeCount; i++) {
             Box box = boxes[active[i]];
@@ -136,38 +142,50 @@ public final class HudLayout {
             float structureQ = Math.min(breadth, Math.max(zeroSize, box.needSecondary));
             float trackQ = 0;
             if (s.projection && !s.internalProjection) {
-                structureQ = Math.max(0, Math.min(structureQ, breadth - trackingBase));
-                trackQ = trackingBase;
+                trackQ = Math.min(innerP, Math.max(0, breadth - 2 * pad) / 2);
+                structureQ = Math.max(0, Math.min(structureQ, breadth - trackQ));
                 if (s.minTrackingSquare) trackQ = Math.max(trackQ, innerP);
                 trackQ = Math.min(trackQ, Math.max(0, screenQ - structureQ));
-                fitSpan = Math.min(fitSpan, Math.min(innerP, trackingBase));
             } else if (s.projection) {
-                fitSpan = Math.min(fitSpan, Math.min(reserve, Math.max(0, structureQ - 2 * pad)));
+                structureQ = Math.min(breadth, Math.max(structureQ, reserve + 2 * pad));
             }
             box.trackingCross = trackQ;
-            box.projectionSize = s.internalProjection ? reserve : trackQ;
             box.secondary = structureQ + trackQ;
             commonQ = Math.max(commonQ, box.secondary);
         }
-        float largest = s.manualLargest ? s.manualLargestSize : profiles.largestHitSize;
-        float compressedLargest = compressed(largest, s) * scale;
-        float fitting = s.adapt && activeCount > 0 && s.projection ?
-            Math.min(1, Math.max(0, fitSpan) * s.occupancy / compressedLargest) : 1;
-        projectionScale = scale * fitting;
+        projectionSpan = Float.MAX_VALUE;
+        double extent = 0;
         place(zero, 0, outerCross(zeroSize), zeroSize, zeroSize);
         float cursor = zeroSize + zeroGap;
         for (int i = 0; i < orderCount; i++) {
             Box box = boxes[order[i]];
             place(box.guide, zeroSize + zeroGap + i * (maxPrimary + gap), 0, maxPrimary, breadth);
-            if (!box.visible) { box.full.set(0, 0, 0, 0); box.shown.set(box.full); continue; }
+            if (!box.visible) {
+                box.full.set(0, 0, 0, 0); box.shown.set(box.full);
+                box.projectionFull.set(box.full); box.projection.set(box.full); box.projectionUsable.set(box.full);
+                continue;
+            }
             if (s.align) box.secondary = commonQ;
             place(box.full, cursor, outerCross(box.secondary), box.primary, box.secondary);
             cursor += box.primary + gap;
-            setAreas(box.full, box.contentFull, box.projection, box, s);
+            setAreas(box.full, box.contentFull, box.projectionFull, box, s);
+            usableProjection(box.full, box.projectionFull, box.projectionUsable);
+            box.projectionFitSpan = Math.min(box.projectionUsable.width, box.projectionUsable.height);
+            projectionSpan = Math.min(projectionSpan, box.projectionFitSpan);
+            extent = Math.max(extent, box.projectionExtent);
             if (editor) box.expansion = 1;
             prepareCells(box, s);
             animate(box, s, editor, false, 0);
         }
+        if (activeCount == 0 || !s.projection) projectionSpan = 0;
+        // The circle envelope covers every rotation. Drift can consume 7% of Z on each side.
+        // Automatic Hmax determines safety only; a manual denominator must remain free to cause overflow.
+        double automatic = compressed(profiles.largestHitSize, s);
+        double diameter = Math.max(1, 2 * extent / automatic);
+        projectionSafety = diameter / (1 - 2 * UnitProjection.DRIFT_FRACTION);
+        float largest = s.manualLargest ? s.manualLargestSize : profiles.largestHitSize;
+        projectionScale = s.adapt ? projectionSpan * (double)ModSettings.finite(s.occupancy, .8f, 0, 1) /
+            projectionSafety / compressed(largest, s) : scale;
         usedPrimary = activeCount == 0 ? 0 : cursor - zeroSize - zeroGap - activeCount * gap;
         // The editable frame retains its configured size; only square tracking may extend beyond it.
         minX = 0; minY = 0; maxX = width; maxY = height;
@@ -178,6 +196,18 @@ public final class HudLayout {
         positionX = Mathf.clamp(positionX, -minX, Math.max(-minX, sw - maxX));
         positionY = Mathf.clamp(positionY, -minY, Math.max(-minY, sh - maxY));
         if (telemetry) rebuilds++;
+    }
+
+    private float fullCap(int id, ModSettings s, boolean residual) {
+        if (id == GroupModel.UNASSIGNED) {
+            if (residual) return Float.MAX_VALUE;
+            if (s.freeSpaceMode == ModSettings.FreeSpaceMode.LIMITED) return availablePrimary / orderCount;
+        }
+        return switch (s.spaceMode) {
+            case LIMITED -> availablePrimary / orderCount;
+            case EQUAL -> availablePrimary / Math.max(1, activeCount);
+            case PROPORTIONAL -> Float.MAX_VALUE;
+        };
     }
 
     /** Bounded water filling: at most 11 groups, no allocation, protected minima before proportional shortage. */
@@ -240,9 +270,17 @@ public final class HudLayout {
             box.cells = next;
         }
         box.cellCount = count;
+        box.projectionExtent = 0;
         float p = 0, q = 0, rowP = 0, rowQ = 0; int tier = -1;
         for (int i = 0; i < count; i++) {
             Cell cell = box.cells[i]; cell.bucket = box.group.types.get(i);
+            var profile = cell.bucket.profile;
+            double hit = referenceHit(profile.unit.hitSize, s.baseSize);
+            double radius = s.advanced ? profile.advancedProjectionRadius : profile.projectionRadius;
+            // The normalized fallback and status strokes also cover types with invalid hitSize.
+            double statusRadius = s.advanced && profile.unit.drawShields ? UnitProjection.SHIELD_RADIUS : UnitProjection.BURNING_RADIUS;
+            double relativeRadius = Math.max(Math.sqrt(.5), Math.max(radius / hit, statusRadius + UnitProjection.STATUS_STROKE_RADIUS / hit));
+            box.projectionExtent = Math.max(box.projectionExtent, relativeRadius * compressed(profile.unit.hitSize, s));
             cell.iconSize = iconPixels(cell.bucket.profile.unit.hitSize, s) * scale;
             cell.fontScale = 0.65f * cell.iconSize / 24f;
             cell.showCount = !(s.hideSingles && cell.bucket.count == 1);
@@ -299,6 +337,25 @@ public final class HudLayout {
         if (vertical) { box.shown.width = q; if (crossLow) box.shown.x += fullQ - q; }
         else { box.shown.height = q; if (crossLow) box.shown.y += fullQ - q; }
         setAreas(box.shown, box.content, box.projection, box, s);
+        usableProjection(box.shown, box.projection, box.projectionUsable);
+    }
+
+    /** Exclude the real panel border and the divider once, then leave one raster pixel for edge filtering/strokes. */
+    private void usableProjection(Rect body, Rect tracking, Rect out) {
+        float border = Math.min(BORDER, Math.min(body.width, body.height) / 2);
+        float divider = Math.min(BORDER, Math.min(tracking.width, tracking.height));
+        float left = Math.max(tracking.x, body.x + border), bottom = Math.max(tracking.y, body.y + border);
+        float right = Math.min(tracking.x + tracking.width, body.x + body.width - border);
+        float top = Math.min(tracking.y + tracking.height, body.y + body.height - border);
+        switch (projectionSide) {
+            case LEFT -> right = Math.min(right, tracking.x + tracking.width - divider);
+            case RIGHT -> left = Math.max(left, tracking.x + divider);
+            case BOTTOM -> top = Math.min(top, tracking.y + tracking.height - divider);
+            case TOP -> bottom = Math.max(bottom, tracking.y + divider);
+        }
+        float w = Math.max(0, right - left), h = Math.max(0, top - bottom);
+        float ix = Math.min(RASTER_MARGIN, w / 2), iy = Math.min(RASTER_MARGIN, h / 2);
+        out.set(left + ix, bottom + iy, w - 2 * ix, h - 2 * iy);
     }
 
     private void prepareCells(Box box, ModSettings settings) {
@@ -355,11 +412,17 @@ public final class HudLayout {
         else out.set(reverse ? length - p - dp : p, q, dp, dq);
     }
 
-    public float projectionPixels(float hitSize, ModSettings settings) { return compressed(hitSize, settings) * projectionScale; }
+    public float projectionPixels(float hitSize, ModSettings settings) { return finitePixels(compressed(hitSize, settings) * projectionScale); }
     public static float compressed(float hitSize, ModSettings s) {
-        if (!Float.isFinite(hitSize) || hitSize <= 0) hitSize = s.baseSize;
-        return Math.max(0.01f, s.baseSize + (hitSize - s.baseSize) * s.compression);
+        float base = referenceHit(s.baseSize, 8);
+        double hit = referenceHit(hitSize, base);
+        double k = ModSettings.finite(s.compression, .2f, 0, 1);
+        return (float)(base * (1 - k) + hit * k);
     }
+    public static float referenceHit(float hitSize, float base) {
+        return Float.isFinite(hitSize) && hitSize > 0 ? hitSize : Float.isFinite(base) && base > 0 ? base : 8;
+    }
+    public static float finitePixels(double pixels) { return pixels > 0 ? (float)Math.min(Float.MAX_VALUE, pixels) : 0; }
     public static float iconPixels(float hitSize, ModSettings s) {
         float size = !Float.isFinite(hitSize) || hitSize <= 0 ? s.baseSize : hitSize;
         double result = s.iconSize * (s.iconInfluence ? (s.baseSize + ((double)size - s.baseSize) * s.iconCoefficient) / s.baseSize : 1);

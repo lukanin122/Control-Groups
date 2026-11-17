@@ -34,7 +34,7 @@ import java.util.function.IntFunction;
 public final class GroupsHud extends Element {
     private static final Color EDITOR_COLOR = Color.valueOf("ffd37f");
     private static final Color NATIVE_BORDER = Color.valueOf("454545");
-    private static final float BORDER = 4f;
+    private static final float BORDER = HudLayout.BORDER;
     private static final String[] GROUP_LABELS = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "*"};
     public final ModSettings settings;
     public final UnitProfiles profiles;
@@ -279,9 +279,11 @@ public final class GroupsHud extends Element {
             Unit unit = box.group.representative.unit;
             if (GroupModel.available(unit, team) && profiles.allowed(unit.type)) {
                 var profile = profiles.get(unit.type);
-                float pixels = layout.projectionPixels(unit.type.hitSize, settings) * profile.resize;
-                projection.draw(unit, box.group.index, x + box.projection.x + box.projection.width / 2,
-                    y + box.projection.y + box.projection.height / 2, pixels, Math.min(box.projection.width, box.projection.height), delta, settings.advanced, alpha);
+                float pixels = HudLayout.finitePixels((double)layout.projectionPixels(unit.type.hitSize, settings) * profile.resize);
+                Rect area = box.projectionUsable;
+                projection.draw(unit, box.group.index, x + area.x + area.width / 2,
+                    y + area.y + area.height / 2, pixels, box.projectionFitSpan,
+                    HudLayout.referenceHit(unit.type.hitSize, settings.baseSize), delta, settings.advanced, alpha);
             }
             divider(box, box.group.activity == Activity.IDLE ? NATIVE_BORDER : border, alpha);
         }

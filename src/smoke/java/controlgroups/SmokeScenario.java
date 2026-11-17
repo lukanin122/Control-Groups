@@ -3,9 +3,16 @@ package controlgroups;
 import arc.Core;
 import arc.files.Fi;
 import arc.graphics.Color;
+import arc.graphics.Texture;
+import arc.graphics.PixmapIO;
+import arc.graphics.g2d.Batch;
 import arc.graphics.g2d.Draw;
 import arc.graphics.g2d.GlyphLayout;
 import arc.graphics.g2d.Lines;
+import arc.graphics.g2d.SpriteBatch;
+import arc.graphics.g2d.TextureRegion;
+import arc.graphics.gl.FrameBuffer;
+import arc.math.Mat;
 import arc.input.KeyCode;
 import arc.math.geom.Rect;
 import arc.scene.Element;
@@ -44,6 +51,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
     private GroupsHud hud;
     private final Seq<Unit> army = new Seq<>();
     private final long[] baseline = new long[240], enabled = new long[240];
+    private int projectionCases;
 
     public SmokeScenario(Fi reports) {
         this.reports = reports; reports.mkdirs();
@@ -100,6 +108,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                         (hud.layout.projectionSide == HudLayout.Side.TOP || hud.layout.projectionSide == HudLayout.Side.BOTTOM),
                         "Internal projections did not reserve longitudinal space");
                     require(Core.gl.glGetError() == 0, "OpenGL error after internal projection drawing");
+                    verifyProjectionFitting();
                     Core.graphics.setWindowSize(640, 480);
                     hud.toggleEditor(); stage++; frames = 0;
                 }
@@ -240,6 +249,12 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         Seq<Element> controls = new Seq<>(); collect(editor, controls);
         for (Element e : controls) if (e instanceof ScrollPane scroll)
             require(scroll.getWidget().getWidth() <= scroll.getScrollWidth() + .01f, "Small editor overflows horizontally");
+        TextField occupancy = (TextField)Core.scene.find("cg.value.occupancy");
+        occupancy.setProgrammaticChangeEvents(true); occupancy.setText("0");
+        require(occupancy.isValid() && hud.settings.occupancy == 0 && new ModSettings(Core.settings).occupancy == 0,
+            "Zero occupancy was rejected or could not be saved");
+        fireButton("cg.reset.occupancy");
+        require(hud.settings.occupancy == .8f, "Occupancy reset did not restore the 80% default");
     }
 
     private void verifyEditor() {
@@ -471,6 +486,167 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         } catch (ReflectiveOperationException exception) { throw new AssertionError(exception); }
     }
 
+    /** Uses the client's real atlas, unit implementations, renderer and Arc's own vertex construction. */
+    private void verifyProjectionFitting() {
+        var types = Seq.with(UnitTypes.dagger, UnitTypes.conquer, UnitTypes.oct);
+        require(types.get(0).hitSize == 8 && types.get(1).hitSize == 46 && types.get(2).hitSize == 66,
+            "Projection fixtures no longer match the target content version");
+        Seq<Unit> samples = new Seq<>();
+        for (var type : types) {
+            Unit unit = type.spawn(Team.sharded, 450, 450);
+            unit.shield = 100;
+            unit.apply(mindustry.content.StatusEffects.burning, 120);
+            samples.add(unit);
+        }
+        var model = new GroupModel(hud.profiles, Vars.content.units());
+        var settings = new ModSettings(new arc.Settings());
+        settings.advanced = true; settings.occupancy = 1;
+        var layout = new HudLayout(model);
+        var renderer = new UnitProjection();
+        IntSeq[] groups = new IntSeq[10];
+        ProjectionProbe probe = new ProjectionProbe();
+        Batch original = Core.batch;
+        Draw.flush();
+        try {
+            Core.batch = probe;
+            for (int count : new int[]{1, 10}) {
+                for (int i = 0; i < groups.length; i++) {
+                    groups[i] = new IntSeq();
+                    if (i < count) for (Unit unit : samples) groups[i].add(unit.id);
+                }
+                model.reconcile(groups, id -> mindustry.gen.Groups.unit.getByID(id), samples, Team.sharded, false);
+                for (int direction = 0; direction < 4; direction++) for (boolean internal : new boolean[]{false, true})
+                    for (boolean square : new boolean[]{false, true}) for (var mode : ModSettings.SpaceMode.values())
+                        for (float compression : new float[]{0, .2f, 1}) for (int size = 0; size < 2; size++) {
+                            settings.vertical = direction < 2; settings.reverse = direction % 2 == 1;
+                            settings.internalProjection = internal; settings.minTrackingSquare = square;
+                            settings.spaceMode = mode; settings.compression = compression;
+                            settings.length = size == 0 ? 160 : 1600; settings.breadth = size == 0 ? 48 : 600;
+                            layout.rebuild(settings, hud.profiles, size == 0 ? 320 : 1920, size == 0 ? 240 : 1080,
+                                size == 0 ? .75f : 2, true);
+                            for (var box : layout.boxes) if (box.visible) {
+                                Rect area = box.projectionUsable;
+                                for (Unit unit : samples) for (int pose = 0; pose < 3; pose++) {
+                                    unit.rotation = pose == 0 ? 0 : 45;
+                                    unit.elevation = 1;
+                                    unit.vel.set(pose == 1 ? 1 : -1, pose == 1 ? 1 : -1);
+                                    for (var mount : unit.mounts) {
+                                        mount.rotation = 45 * pose;
+                                        mount.recoil = mount.heat = mount.warmup = mount.charge = pose / 2f;
+                                        mount.reload = mount.weapon.reload * pose / 2f;
+                                    }
+                                    probe.reset();
+                                    float pixels = layout.projectionPixels(unit.type.hitSize, settings);
+                                    renderer.draw(unit, box.group.index, area.x + area.width / 2, area.y + area.height / 2,
+                                        pixels, box.projectionFitSpan, unit.type.hitSize, 10, true, 1);
+                                    if (pixels > 0) require(probe.vertices > 0, "Projection fixture drew no vertices");
+                                    require(probe.inside(area), "Real projection geometry exceeds its usable area: " + unit.type.name +
+                                        " area=" + area + " vertices=" + probe.bounds() + " direction=" + direction +
+                                        " internal=" + internal + " mode=" + mode + " K=" + compression);
+                                    projectionCases++;
+                                }
+                            }
+                        }
+            }
+        } finally { Core.batch = original; probe.dispose(); }
+        try {
+            for (int i = 1; i < groups.length; i++) groups[i].clear();
+            model.reconcile(groups, id -> mindustry.gen.Groups.unit.getByID(id), samples, Team.sharded, false);
+            settings.internalProjection = true; settings.length = 600; settings.breadth = 180;
+            settings.compression = .2f; settings.occupancy = .8f;
+            settings.spaceMode = ModSettings.SpaceMode.PROPORTIONAL;
+            layout.rebuild(settings, hud.profiles, 1280, 900, 1, true);
+            for (Unit unit : samples) verifyProjectionPixels(unit, renderer, layout, settings);
+            String rasterSizes = String.format(Locale.ROOT,
+                "Raster fixture: automatic Hmax %.1f, Z %.2f, safety R %.3f, P(8/46/66) %.2f/%.2f/%.2f UI pixels.%n",
+                hud.profiles.largestHitSize, layout.projectionSpan, layout.projectionSafety,
+                layout.projectionPixels(8, settings), layout.projectionPixels(46, settings), layout.projectionPixels(66, settings));
+            verifyProjectionOverflow(samples.peek(), renderer, settings, layout);
+            require(Core.gl.glGetError() == 0, "OpenGL error after fitted projection rasterization");
+            reports.child("projection-geometry.txt").writeString(projectionCases +
+                " real-asset vertex cases PASS; 3 transparent framebuffer pixel bounds PASS.\n" +
+                "Types: dagger 8, conquer 46, oct 66; 1/10 groups, all orientations/modes, internal/external,\n" +
+                "square off/on, K=0/.2/1, occupancy 100%, 320x240@.75 and 1920x1080@2,\n" +
+                "0/45 degrees, full diagonal drift, weapon states; raster check at default occupancy 80%.\n" +
+                "Manual Hmax and resize deliberately overflow without changing HUD/interaction bounds: PASS.\n" + rasterSizes);
+        } finally { for (Unit unit : samples) unit.remove(); }
+    }
+
+    private void verifyProjectionOverflow(Unit unit, UnitProjection renderer, ModSettings settings, HudLayout layout) {
+        Rect originalBounds = new Rect(layout.boxes[0].full);
+        settings.compression = 1; settings.manualLargest = true; settings.manualLargestSize = 1;
+        layout.rebuild(settings, hud.profiles, 1280, 900, 1, true);
+        require(originalBounds.equals(layout.boxes[0].full), "Manual maximum changed HUD bounds");
+        ProjectionProbe probe = new ProjectionProbe(); Batch originalBatch = Core.batch; Draw.flush();
+        try {
+            Core.batch = probe;
+            for (boolean manual : new boolean[]{true, false}) {
+                settings.manualLargest = manual;
+                layout.rebuild(settings, hud.profiles, 1280, 900, 1, true);
+                Rect r = layout.boxes[0].projectionUsable; probe.reset();
+                float pixels = layout.projectionPixels(unit.type.hitSize, settings) * (manual ? 1 : 20);
+                renderer.draw(unit, 0, r.x + r.width / 2, r.y + r.height / 2, pixels, layout.projectionSpan,
+                    unit.type.hitSize, 10, true, 1);
+                require(probe.vertices > 0 && !probe.inside(r), "Manual Hmax/resize was secretly clamped");
+                require(originalBounds.equals(layout.boxes[0].full), "Overflow changed the interaction geometry");
+            }
+        } finally { Core.batch = originalBatch; probe.dispose(); }
+    }
+
+    private void verifyProjectionPixels(Unit unit, UnitProjection renderer, HudLayout layout, ModSettings settings) {
+        float z = layout.projectionSpan;
+        require(z > 0 && z < 400, "Framebuffer fitting fixture is not observable");
+        FrameBuffer buffer = new FrameBuffer(512, 512);
+        Mat projection = new Mat(Draw.proj()), transform = new Mat(Draw.trans());
+        Draw.flush();
+        buffer.begin(Color.clear);
+        try {
+            Draw.proj(0, 0, 512, 512); Draw.trans(new Mat());
+            unit.rotation = 45; unit.vel.set(1, 1);
+            renderer.draw(unit, 0, 256, 256, layout.projectionPixels(unit.type.hitSize, settings), z,
+                unit.type.hitSize, 10, true, 1);
+            Draw.flush();
+            var pixels = ScreenUtils.getFrameBufferPixmap(0, 0, 512, 512);
+            int colored = 0;
+            try {
+                for (int y = 0; y < 512; y++) for (int x = 0; x < 512; x++) if ((pixels.get(x, y) & 255) != 0) {
+                    require(x >= 256 - z / 2 - 1 && x <= 256 + z / 2 + 1 &&
+                        y >= 256 - z / 2 - 1 && y <= 256 + z / 2 + 1,
+                        "Rasterized projection crosses its usable frame: " + unit.type.name);
+                    colored++;
+                }
+                require(colored > 0, "Projection framebuffer is empty: " + unit.type.name);
+                PixmapIO.writePng(reports.child("projection-" + unit.type.name + ".png"), pixels);
+            } finally { pixels.dispose(); }
+        } finally {
+            Draw.flush(); buffer.end(); Draw.proj(projection); Draw.trans(transform); buffer.dispose();
+        }
+    }
+
+    private static final class ProjectionProbe extends SpriteBatch {
+        private final float[] quad = new float[SPRITE_SIZE];
+        private float left, bottom, right, top;
+        private int vertices;
+        ProjectionProbe() { super(0); reset(); }
+        void reset() { left = bottom = Float.POSITIVE_INFINITY; right = top = Float.NEGATIVE_INFINITY; vertices = 0; }
+        @Override protected void draw(TextureRegion region, float x, float y, float ox, float oy, float w, float h, float rotation) {
+            constructVertices(quad, 0, region, x, y, ox, oy, w, h, rotation);
+            draw(region.texture, quad, 0, quad.length);
+        }
+        @Override protected void draw(Texture texture, float[] points, int offset, int count) {
+            for (int i = offset; i < offset + count; i += VERTEX_SIZE) {
+                float x = points[i], y = points[i + 1];
+                require(Float.isFinite(x) && Float.isFinite(y), "Projection sent non-finite vertices to Arc");
+                left = Math.min(left, x); right = Math.max(right, x);
+                bottom = Math.min(bottom, y); top = Math.max(top, y); vertices++;
+            }
+        }
+        @Override protected void flush() { }
+        boolean inside(Rect r) { return vertices == 0 || left >= r.x - .02f && bottom >= r.y - .02f &&
+            right <= r.x + r.width + .02f && top <= r.y + r.height + .02f; }
+        Rect bounds() { return new Rect(left, bottom, right - left, top - bottom); }
+    }
+
     private void verifyBuildingSelection(Rect group) {
         Vars.player.unit(UnitTypes.alpha.spawn(Team.sharded, 600, 600));
         require(!Vars.player.dead() && Vars.player.isBuilder(), "Placement fixture has no living builder");
@@ -594,6 +770,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
             "Editor visual controls, fixed toolbar, hierarchy, columns and complete yellow settings border: PASS%n" +
             "Geometry edits reuse game data; detailed icon threshold/fallback: PASS%n" +
             "Internal projection/OpenGL and actual 640x480/320x240 windows: PASS%n" +
+            "Fitted projection real-asset vertices and transparent framebuffer pixels: PASS%n" +
             "All unit rows, avatar bans, ban/unban and per-type resets: PASS%n" +
             "Unit color field width/tint: PASS%nWorld reset: PASS%nRenderer state restore: PASS%n" +
             "This is an automated sandbox run, not a multiplayer or interactive gameplay test.%n",

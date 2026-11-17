@@ -126,7 +126,7 @@ final class HudEditor extends Table {
         numberRow(projection, "base", () -> s.baseSize, () -> 8, .01, 4096, value -> s.baseSize = (float)value);
         numberRow(projection, "compression", () -> s.compression * 100, () -> 20, 0, 100,
             value -> s.compression = (float)value / 100);
-        numberRow(projection, "occupancy", () -> s.occupancy * 100, () -> 80, 1, 100,
+        numberRow(projection, "occupancy", () -> s.occupancy * 100, () -> 80, 0, 100,
             value -> s.occupancy = (float)value / 100);
 
         telemetry = section(content, "telemetry", diagnostics, false, true);
