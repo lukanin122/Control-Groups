@@ -27,6 +27,7 @@ import arc.scene.ui.Image;
 import arc.scene.ui.Button;
 import arc.scene.ui.Label;
 import arc.scene.ui.Tooltip;
+import arc.scene.ui.layout.Scl;
 import arc.math.geom.Vec2;
 import arc.struct.IntSeq;
 import arc.struct.Seq;
@@ -254,7 +255,13 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         require(occupancy.isValid() && hud.settings.occupancy == 0 && new ModSettings(Core.settings).occupancy == 0,
             "Zero occupancy was rejected or could not be saved");
         fireButton("cg.reset.occupancy");
-        require(hud.settings.occupancy == .8f, "Occupancy reset did not restore the 80% default");
+        require(hud.settings.occupancy == 1, "Occupancy reset did not restore the 100% default");
+        occupancy.setText("300");
+        require(occupancy.isValid() && hud.settings.occupancy == 3 && new ModSettings(Core.settings).occupancy == 3,
+            "300% occupancy was rejected or could not be saved");
+        occupancy.setText("301");
+        require(!occupancy.isValid() && hud.settings.occupancy == 3, "Out-of-range occupancy was committed");
+        fireButton("cg.reset.occupancy");
     }
 
     private void verifyEditor() {
@@ -343,7 +350,15 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
             before[i] = new Rect(point.x, point.y, button.getWidth(), button.getHeight());
             Image image = button.getImage();
             float inset = image.x + image.getImageX();
-            require(inset >= 5 * hud.layout.scale && button.getWidth() - inset - image.getImageWidth() >= 5 * hud.layout.scale,
+            require(Math.abs(button.getWidth() - hud.layout.zeroSize) < .01f &&
+                Math.abs(button.getHeight() - hud.layout.zeroSize) < .01f, "Toolbar button does not match settings button size");
+            require(image.getDrawable().getClass() == arc.scene.style.TextureRegionDrawable.class,
+                "Toolbar glyph still ignores its allocated drawing size");
+            float iconScale = image.getImageWidth() / image.getDrawable().getMinWidth();
+            require(Math.abs(button.getMarginLeft() - 4 * iconScale) < .01f,
+                "Toolbar padding mismatch: " + keys[i] + " margin=" + button.getMarginLeft() + " scale=" + iconScale);
+            require(inset >= button.getMarginLeft() - 1.01f &&
+                button.getWidth() - inset - image.getImageWidth() >= button.getMarginRight() - 1.01f,
                 "Editor icon touches its border: " + keys[i]);
             require(button.getStyle().up != button.getStyle().over && button.getStyle().over != button.getStyle().down,
                 "Border feedback states are identical");
@@ -352,6 +367,13 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         ImageButton collapse = (ImageButton)Core.scene.find("cg.editor.collapse");
         require(projection.getStyle().imageUpColor == Color.white && collapse.getStyle().imageUpColor == Color.gray,
             "Toolbar switches do not use white/gray status");
+        ImageButton units = (ImageButton)Core.scene.find("cg.editor.units");
+        float listWidth = units.getImage().getImageWidth();
+        require(Math.abs(projection.getImage().getImageWidth() - listWidth) < .01f, "eye and list widths differ");
+        fireButton("cg.editor.projection"); Core.scene.act(.02f); Core.scene.draw();
+        require(Math.abs(projection.getImage().getImageWidth() - listWidth) < .01f, "eyeOff and list widths differ");
+        fireButton("cg.editor.projection"); Core.scene.act(.02f); Core.scene.draw();
+        verifyTooltipAnchor(projection);
         int revision = hud.settings.revision;
         Rect group = new Rect(hud.layout.boxes[0].full);
         fireButton("cg.editor.editor-schematic"); Core.scene.act(.02f);
@@ -391,6 +413,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         fireButton("cg.section.group-icon-settings");
         fireButton("cg.section.advanced-settings"); fireButton("cg.section.projection-settings");
         TextField manual = (TextField)Core.scene.find("cg.value.manual-size"); showElement(manual);
+        verifyTooltipAnchor(manual);
         Element manualToggle = Core.scene.find("cg.toggle.manual-largest");
         require(Math.abs(manual.localToStageCoordinates(new Vec2()).x - manualToggle.localToStageCoordinates(new Vec2()).x -
             manualToggle.getWidth() - 5 * hud.layout.scale) < .51f, "Combined setting gap is not 5 UI pixels");
@@ -420,6 +443,26 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
             try { require((image.get(0, 0) >>> 8) == (Pal.accent.rgba() >>> 8), "Editor frame obscures the settings button border"); }
             finally { image.dispose(); }
         }
+        verifyToolbarScales();
+    }
+
+    private void verifyToolbarScales() {
+        float original = Scl.scl();
+        try {
+            for (float scale : new float[]{.75f, 1.25f, 2}) {
+                Scl.setProduct(scale); Core.scene.act(.02f); Core.scene.draw();
+                for (String name : new String[]{"move", "rotate", "reverse", "units", "projection", "collapse", "editor-schematic", "editor-expanded"}) {
+                    Element button = Core.scene.find("cg.editor." + name);
+                    require(Math.abs(button.getWidth() - hud.layout.zeroSize) < .01f &&
+                        Math.abs(button.getHeight() - hud.layout.zeroSize) < .01f, "Toolbar size differs from settings at UI scale " + scale);
+                }
+                ImageButton eye = (ImageButton)Core.scene.find("cg.editor.projection");
+                ImageButton list = (ImageButton)Core.scene.find("cg.editor.units");
+                require(Math.abs(eye.getImage().getImageWidth() - list.getImage().getImageWidth()) < .01f,
+                    "Icon width normalization changed at UI scale " + scale);
+                verifyTooltipAnchor(eye);
+            }
+        } finally { Scl.setProduct(original); Core.scene.act(.02f); Core.scene.draw(); }
     }
 
     private void verifyUnitFields() {
@@ -522,7 +565,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                             settings.internalProjection = internal; settings.minTrackingSquare = square;
                             settings.spaceMode = mode; settings.compression = compression;
                             settings.length = size == 0 ? 160 : 1600; settings.breadth = size == 0 ? 48 : 600;
-                            layout.rebuild(settings, hud.profiles, size == 0 ? 320 : 1920, size == 0 ? 240 : 1080,
+                            layout.rebuild(settings, size == 0 ? 320 : 1920, size == 0 ? 240 : 1080,
                                 size == 0 ? .75f : 2, true);
                             for (var box : layout.boxes) if (box.visible) {
                                 Rect area = box.projectionUsable;
@@ -536,7 +579,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                                         mount.reload = mount.weapon.reload * pose / 2f;
                                     }
                                     probe.reset();
-                                    float pixels = layout.projectionPixels(unit.type.hitSize, settings);
+                                    float pixels = layout.projectionPixels(box, unit.type.hitSize, settings);
                                     renderer.draw(unit, box.group.index, area.x + area.width / 2, area.y + area.height / 2,
                                         pixels, box.projectionFitSpan, unit.type.hitSize, 10, true, 1);
                                     if (pixels > 0) require(probe.vertices > 0, "Projection fixture drew no vertices");
@@ -548,53 +591,100 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                             }
                         }
             }
+            verifyLocalProjectionScaling(samples, model, settings, layout, groups, renderer, probe);
         } finally { Core.batch = original; probe.dispose(); }
         try {
+            groups[0].clear(); for (Unit unit : samples) groups[0].add(unit.id);
             for (int i = 1; i < groups.length; i++) groups[i].clear();
             model.reconcile(groups, id -> mindustry.gen.Groups.unit.getByID(id), samples, Team.sharded, false);
             settings.internalProjection = true; settings.length = 600; settings.breadth = 180;
-            settings.compression = .2f; settings.occupancy = .8f;
+            settings.compression = .2f; settings.occupancy = 1;
             settings.spaceMode = ModSettings.SpaceMode.PROPORTIONAL;
-            layout.rebuild(settings, hud.profiles, 1280, 900, 1, true);
+            layout.rebuild(settings, 1280, 900, 1, true);
             for (Unit unit : samples) verifyProjectionPixels(unit, renderer, layout, settings);
             String rasterSizes = String.format(Locale.ROOT,
                 "Raster fixture: automatic Hmax %.1f, Z %.2f, safety R %.3f, P(8/46/66) %.2f/%.2f/%.2f UI pixels.%n",
-                hud.profiles.largestHitSize, layout.projectionSpan, layout.projectionSafety,
-                layout.projectionPixels(8, settings), layout.projectionPixels(46, settings), layout.projectionPixels(66, settings));
+                layout.boxes[0].largestHitSize, layout.boxes[0].projectionFitSpan, layout.boxes[0].projectionSafety,
+                layout.projectionPixels(layout.boxes[0], 8, settings), layout.projectionPixels(layout.boxes[0], 46, settings),
+                layout.projectionPixels(layout.boxes[0], 66, settings));
             verifyProjectionOverflow(samples.peek(), renderer, settings, layout);
             require(Core.gl.glGetError() == 0, "OpenGL error after fitted projection rasterization");
             reports.child("projection-geometry.txt").writeString(projectionCases +
                 " real-asset vertex cases PASS; 3 transparent framebuffer pixel bounds PASS.\n" +
                 "Types: dagger 8, conquer 46, oct 66; 1/10 groups, all orientations/modes, internal/external,\n" +
                 "square off/on, K=0/.2/1, occupancy 100%, 320x240@.75 and 1920x1080@2,\n" +
-                "0/45 degrees, full diagonal drift, weapon states; raster check at default occupancy 80%.\n" +
-                "Manual Hmax and resize deliberately overflow without changing HUD/interaction bounds: PASS.\n" + rasterSizes);
+                "0/45 degrees, full diagonal drift, weapon states; raster check at default occupancy 100%.\n" +
+                "Independent group maxima/areas/safety and shared override: PASS.\n" +
+                "Manual Hmax, resize and 300% occupancy deliberately overflow without changing HUD/interaction bounds: PASS.\n" + rasterSizes);
         } finally { for (Unit unit : samples) unit.remove(); }
+    }
+
+    private void verifyLocalProjectionScaling(Seq<Unit> samples, GroupModel model, ModSettings settings, HudLayout layout,
+                                              IntSeq[] groups, UnitProjection renderer, ProjectionProbe probe) {
+        for (IntSeq group : groups) group.clear();
+        groups[0].add(samples.get(0).id); groups[1].add(samples.get(1).id);
+        groups[2].add(samples.get(0).id, samples.get(2).id);
+        model.reconcile(groups, id -> mindustry.gen.Groups.unit.getByID(id), samples, Team.sharded, false);
+        settings.internalProjection = false; settings.align = false;
+        settings.length = 1600; settings.breadth = 600; settings.compression = .2f;
+        layout.rebuild(settings, 1920, 1080, 1, true);
+        double[] scales = new double[3], safety = new double[3];
+        float[] maxima = {8, 46, 66};
+        for (int i = 0; i < 3; i++) {
+            var box = layout.boxes[i]; scales[i] = box.projectionScale; safety[i] = box.projectionSafety;
+            require(box.largestHitSize == maxima[i], "Group used another group's automatic maximum");
+            Rect area = box.projectionUsable;
+            for (var member : box.group.members) {
+                Unit unit = member.unit; probe.reset();
+                renderer.draw(unit, i, area.x + area.width / 2, area.y + area.height / 2,
+                    layout.projectionPixels(box, unit.type.hitSize, settings), box.projectionFitSpan,
+                    unit.type.hitSize, 10, true, 1);
+                require(probe.vertices > 0 && probe.inside(area), "Local fitting failed for " + unit.type.name);
+            }
+        }
+        require(layout.boxes[0].projectionFitSpan != layout.boxes[2].projectionFitSpan && safety[0] != safety[2] && scales[0] != scales[2],
+            "Real groups did not exercise independent areas and safety");
+        settings.manualLargest = true; settings.manualLargestSize = 66;
+        layout.rebuild(settings, 1920, 1080, 1, true);
+        for (int i = 0; i < 3; i++) {
+            var box = layout.boxes[i];
+            double expected = scales[i] * HudLayout.compressed(maxima[i], settings) / HudLayout.compressed(66, settings);
+            require(Math.abs(box.projectionScale - expected) < .00001 && box.projectionSafety == safety[i],
+                "Shared maximum changed a group's safety instead of only its denominator");
+        }
+        settings.manualLargest = false;
     }
 
     private void verifyProjectionOverflow(Unit unit, UnitProjection renderer, ModSettings settings, HudLayout layout) {
         Rect originalBounds = new Rect(layout.boxes[0].full);
         settings.compression = 1; settings.manualLargest = true; settings.manualLargestSize = 1;
-        layout.rebuild(settings, hud.profiles, 1280, 900, 1, true);
+        layout.rebuild(settings, 1280, 900, 1, true);
         require(originalBounds.equals(layout.boxes[0].full), "Manual maximum changed HUD bounds");
         ProjectionProbe probe = new ProjectionProbe(); Batch originalBatch = Core.batch; Draw.flush();
         try {
             Core.batch = probe;
             for (boolean manual : new boolean[]{true, false}) {
                 settings.manualLargest = manual;
-                layout.rebuild(settings, hud.profiles, 1280, 900, 1, true);
+                layout.rebuild(settings, 1280, 900, 1, true);
                 Rect r = layout.boxes[0].projectionUsable; probe.reset();
-                float pixels = layout.projectionPixels(unit.type.hitSize, settings) * (manual ? 1 : 20);
-                renderer.draw(unit, 0, r.x + r.width / 2, r.y + r.height / 2, pixels, layout.projectionSpan,
+                float pixels = layout.projectionPixels(layout.boxes[0], unit.type.hitSize, settings) * (manual ? 1 : 20);
+                renderer.draw(unit, 0, r.x + r.width / 2, r.y + r.height / 2, pixels, layout.boxes[0].projectionFitSpan,
                     unit.type.hitSize, 10, true, 1);
                 require(probe.vertices > 0 && !probe.inside(r), "Manual Hmax/resize was secretly clamped");
                 require(originalBounds.equals(layout.boxes[0].full), "Overflow changed the interaction geometry");
             }
+            settings.occupancy = 3; layout.rebuild(settings, 1280, 900, 1, true);
+            Rect r = layout.boxes[0].projectionUsable; probe.reset();
+            renderer.draw(unit, 0, r.x + r.width / 2, r.y + r.height / 2,
+                layout.projectionPixels(layout.boxes[0], unit.type.hitSize, settings), layout.boxes[0].projectionFitSpan,
+                unit.type.hitSize, 10, true, 1);
+            require(probe.vertices > 0 && !probe.inside(r) && originalBounds.equals(layout.boxes[0].full),
+                "300% occupancy was clamped or changed HUD bounds");
         } finally { Core.batch = originalBatch; probe.dispose(); }
     }
 
     private void verifyProjectionPixels(Unit unit, UnitProjection renderer, HudLayout layout, ModSettings settings) {
-        float z = layout.projectionSpan;
+        float z = layout.boxes[0].projectionFitSpan;
         require(z > 0 && z < 400, "Framebuffer fitting fixture is not observable");
         FrameBuffer buffer = new FrameBuffer(512, 512);
         Mat projection = new Mat(Draw.proj()), transform = new Mat(Draw.trans());
@@ -603,7 +693,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         try {
             Draw.proj(0, 0, 512, 512); Draw.trans(new Mat());
             unit.rotation = 45; unit.vel.set(1, 1);
-            renderer.draw(unit, 0, 256, 256, layout.projectionPixels(unit.type.hitSize, settings), z,
+            renderer.draw(unit, 0, 256, 256, layout.projectionPixels(layout.boxes[0], unit.type.hitSize, settings), z,
                 unit.type.hitSize, 10, true, 1);
             Draw.flush();
             var pixels = ScreenUtils.getFrameBufferPixmap(0, 0, 512, 512);
@@ -698,6 +788,24 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                 for (Element child : tooltip.getContainer().getChildren()) if (child instanceof Label label)
                     require(label.color.equals(arc.graphics.Color.lightGray), "Tooltip color differs from native help");
             }
+        }
+    }
+
+    private static void verifyTooltipAnchor(Element actor) {
+        Tooltip tooltip = null;
+        for (var listener : actor.getListeners()) if (listener instanceof Tooltip found) { tooltip = found; break; }
+        require(tooltip != null, "Missing tooltip on " + actor.name);
+        Vec2 start = actor.localToStageCoordinates(new Vec2());
+        for (float cursor : new float[]{0, 1}) {
+            tooltip.show(actor, actor.getWidth() * cursor, actor.getHeight() * cursor);
+            var container = tooltip.container; container.act(.2f);
+            float expectedX = Math.max(0, Math.min(start.x, Core.scene.getWidth() - container.getWidth()));
+            float expectedY = Math.max(0, Math.min(start.y - container.getHeight(), Core.scene.getHeight() - container.getHeight()));
+            require(Math.abs(container.x - expectedX) < .01f && Math.abs(container.y - expectedY) < .01f,
+                "Tooltip does not start below its element's left edge: " + actor.name);
+            require(container.getWidth() <= Core.scene.getWidth() && container.getHeight() <= Core.scene.getHeight(),
+                "Tooltip does not fit the viewport");
+            tooltip.hide(); container.clearActions(); container.remove();
         }
     }
 

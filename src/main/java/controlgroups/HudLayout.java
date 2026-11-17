@@ -32,6 +32,8 @@ public final class HudLayout {
         public int cellCount;
         public float primary, secondary, structurePrimary, reservePrimary, needPrimary, needSecondary;
         public float trackingCross, projectionFitSpan, expansion = 1f;
+        public float largestHitSize;
+        public double projectionScale, projectionSafety;
         public boolean visible;
         private double projectionExtent;
         private Box(Group group) { this.group = group; }
@@ -46,8 +48,6 @@ public final class HudLayout {
     private final CounterMeasure measure;
     public int orderCount, activeCount;
     public float width, height, length, breadth, maxPrimary, scale, zeroSize;
-    public float projectionSpan;
-    public double projectionScale, projectionSafety;
     public float availablePrimary, projectionReserved, structuralBudget, usedPrimary;
     public float positionX, positionY, minX, minY, maxX, maxY, pixelRatio = 1;
     public Side centerSide = Side.RIGHT, projectionSide = Side.RIGHT, dock;
@@ -63,7 +63,7 @@ public final class HudLayout {
         for (int i = 0; i < boxes.length; i++) boxes[i] = new Box(model.groups[i]);
     }
 
-    public void rebuild(ModSettings s, UnitProfiles profiles, float sw, float sh, float scale, boolean editor) {
+    public void rebuild(ModSettings s, float sw, float sh, float scale, boolean editor) {
         this.scale = scale; vertical = s.vertical; reverse = s.reverse;
         pad = 4 * scale; typeGap = s.typeGap * scale; tierGap = s.tierGap * scale;
         currentCounterGap = s.counterGap * scale;
@@ -88,6 +88,7 @@ public final class HudLayout {
         for (Box box : boxes) {
             box.visible = !box.group.empty() && (box.group.index != GroupModel.UNASSIGNED || s.unassigned);
             box.primary = box.reservePrimary = box.trackingCross = box.projectionFitSpan = 0;
+            box.projectionScale = box.projectionSafety = 0;
             prepareNatural(box, s);
         }
         for (int i = 0; i < orderCount; i++) if (boxes[order[i]].visible) active[activeCount++] = order[i];
@@ -153,8 +154,6 @@ public final class HudLayout {
             box.secondary = structureQ + trackQ;
             commonQ = Math.max(commonQ, box.secondary);
         }
-        projectionSpan = Float.MAX_VALUE;
-        double extent = 0;
         place(zero, 0, outerCross(zeroSize), zeroSize, zeroSize);
         float cursor = zeroSize + zeroGap;
         for (int i = 0; i < orderCount; i++) {
@@ -171,21 +170,17 @@ public final class HudLayout {
             setAreas(box.full, box.contentFull, box.projectionFull, box, s);
             usableProjection(box.full, box.projectionFull, box.projectionUsable);
             box.projectionFitSpan = Math.min(box.projectionUsable.width, box.projectionUsable.height);
-            projectionSpan = Math.min(projectionSpan, box.projectionFitSpan);
-            extent = Math.max(extent, box.projectionExtent);
+            // Safety is relative to this group's automatic maximum; a shared manual denominator cannot cancel itself.
+            double automatic = compressed(box.largestHitSize, s);
+            double diameter = Math.max(1, 2 * box.projectionExtent / automatic);
+            box.projectionSafety = diameter / (1 - 2 * UnitProjection.DRIFT_FRACTION);
+            float largest = s.manualLargest ? s.manualLargestSize : box.largestHitSize;
+            box.projectionScale = s.adapt ? box.projectionFitSpan * (double)ModSettings.finite(s.occupancy, 1, 0, 3) /
+                box.projectionSafety / compressed(largest, s) : scale;
             if (editor) box.expansion = 1;
             prepareCells(box, s);
             animate(box, s, editor, false, 0);
         }
-        if (activeCount == 0 || !s.projection) projectionSpan = 0;
-        // The circle envelope covers every rotation. Drift can consume 7% of Z on each side.
-        // Automatic Hmax determines safety only; a manual denominator must remain free to cause overflow.
-        double automatic = compressed(profiles.largestHitSize, s);
-        double diameter = Math.max(1, 2 * extent / automatic);
-        projectionSafety = diameter / (1 - 2 * UnitProjection.DRIFT_FRACTION);
-        float largest = s.manualLargest ? s.manualLargestSize : profiles.largestHitSize;
-        projectionScale = s.adapt ? projectionSpan * (double)ModSettings.finite(s.occupancy, .8f, 0, 1) /
-            projectionSafety / compressed(largest, s) : scale;
         usedPrimary = activeCount == 0 ? 0 : cursor - zeroSize - zeroGap - activeCount * gap;
         // The editable frame retains its configured size; only square tracking may extend beyond it.
         minX = 0; minY = 0; maxX = width; maxY = height;
@@ -271,11 +266,13 @@ public final class HudLayout {
         }
         box.cellCount = count;
         box.projectionExtent = 0;
+        box.largestHitSize = 0;
         float p = 0, q = 0, rowP = 0, rowQ = 0; int tier = -1;
         for (int i = 0; i < count; i++) {
             Cell cell = box.cells[i]; cell.bucket = box.group.types.get(i);
             var profile = cell.bucket.profile;
             double hit = referenceHit(profile.unit.hitSize, s.baseSize);
+            box.largestHitSize = Math.max(box.largestHitSize, (float)hit);
             double radius = s.advanced ? profile.advancedProjectionRadius : profile.projectionRadius;
             // The normalized fallback and status strokes also cover types with invalid hitSize.
             double statusRadius = s.advanced && profile.unit.drawShields ? UnitProjection.SHIELD_RADIUS : UnitProjection.BURNING_RADIUS;
@@ -412,7 +409,9 @@ public final class HudLayout {
         else out.set(reverse ? length - p - dp : p, q, dp, dq);
     }
 
-    public float projectionPixels(float hitSize, ModSettings settings) { return finitePixels(compressed(hitSize, settings) * projectionScale); }
+    public float projectionPixels(Box box, float hitSize, ModSettings settings) {
+        return finitePixels(compressed(hitSize, settings) * box.projectionScale);
+    }
     public static float compressed(float hitSize, ModSettings s) {
         float base = referenceHit(s.baseSize, 8);
         double hit = referenceHit(hitSize, base);

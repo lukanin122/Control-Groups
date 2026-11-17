@@ -21,7 +21,7 @@ public final class ModSettings {
     public FreeSpaceMode freeSpaceMode = FreeSpaceMode.LIMITED;
     public float length = 640f, breadth = 240f, xFraction, yFraction = 0.5f;
     public float absoluteX, absoluteY;
-    public float baseSize = 8f, compression = 0.2f, occupancy = 0.8f;
+    public float baseSize = 8f, compression = 0.2f, occupancy = 1f;
     public float zeroGap = 6f, groupGap = 4f, tierGap = 4f, typeGap = 4f, counterGap = 2f;
     public float iconSize = 36f, iconCoefficient = 0.2f, freeMinimum = 32f, manualLargestSize = 8f;
     public float damageTicks = 120f;
@@ -56,7 +56,7 @@ public final class ModSettings {
         absoluteX = number("absolute-x", 0, 0, 32768); absoluteY = number("absolute-y", 0, 0, 32768);
         baseSize = number("base", baseSize, 0.01f, 4096);
         compression = number("compression", compression, 0, 1);
-        occupancy = number("occupancy", occupancy, 0, 1);
+        occupancy = number("occupancy", occupancy, 0, 3);
         zeroGap = number("zero-gap", zeroGap, 0, 1000); groupGap = number("group-gap", groupGap, 0, 1000);
         tierGap = number("tier-gap", tierGap, 0, 1000); typeGap = number("type-gap", typeGap, 0, 1000);
         counterGap = number("counter-gap", counterGap, 0, 1000);

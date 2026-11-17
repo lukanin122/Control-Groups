@@ -27,14 +27,14 @@ public final class CoreBenchmark {
         HudLayout layout = new HudLayout(w.model);
         long geometryWarmUntil = System.nanoTime() + 2_000_000_000L;
         for (int i = 0; i < 1000 || System.nanoTime() < geometryWarmUntil; i++)
-            layout.rebuild(w.settings, w.profiles, 1920, 1080, 1, false);
+            layout.rebuild(w.settings, 1920, 1080, 1, false);
         long[] samples = new long[1000];
         var bean = (com.sun.management.ThreadMXBean)ManagementFactory.getThreadMXBean();
         long id = Thread.currentThread().getId();
         long before = bean.isThreadAllocatedMemoryEnabled() ? bean.getThreadAllocatedBytes(id) : 0;
         for (int i = 0; i < samples.length; i++) {
             long started = System.nanoTime();
-            layout.rebuild(w.settings, w.profiles, 1920, 1080, 1, false);
+            layout.rebuild(w.settings, 1920, 1080, 1, false);
             samples[i] = System.nanoTime() - started;
         }
         long allocated = bean.isThreadAllocatedMemoryEnabled() ? bean.getThreadAllocatedBytes(id) - before : -1;

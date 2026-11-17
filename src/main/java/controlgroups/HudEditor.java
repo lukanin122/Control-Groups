@@ -18,6 +18,7 @@ import arc.scene.ui.ScrollPane;
 import arc.scene.ui.layout.Collapser;
 import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Table;
+import arc.struct.ObjectMap;
 import arc.util.Scaling;
 import mindustry.gen.Tex;
 import mindustry.graphics.Pal;
@@ -32,7 +33,11 @@ import static controlgroups.UiControls.*;
 /** A single editor for the live HUD. Section state is presentation, never another game model. */
 final class HudEditor extends Table {
     private static final float MIN_PANEL_WIDTH = 480f;
-    private final float sectionIndent, toolbarButtonSize;
+    private static final float TOOLBAR_INSET = BUTTON_BORDER + (BUTTON_INSET - BUTTON_BORDER) * 2 / 3;
+    private final float sectionIndent, naturalToolbarSize;
+    private float toolbarButtonSize = 44f, toolbarScale, toolbarUiScale;
+    private ImageButton.ImageButtonStyle toolbarStyle;
+    private final ObjectMap<String, TextureRegionDrawable> toolbarIcons = new ObjectMap<>();
     private final TextureRegionDrawable rightArrow, downArrow;
     private final GroupsHud hud;
     private final Table toolbar = new Table();
@@ -47,11 +52,21 @@ final class HudEditor extends Table {
         this.hud = hud;
         rightArrow = disclosure("rightOpen"); downArrow = disclosure("downOpen");
         sectionIndent = downArrow.getMinWidth() / Scl.scl();
-        float buttonSize = BUTTON_SIZE;
-        for (String icon : new String[]{"move", "refresh", "flipX", "flipY", "list", "eye", "eyeOff", "cancel", "left", "right", "up", "down", "grid", "bookOpen"})
-            buttonSize = Math.max(buttonSize, GroupsHud.drawable(icon).imageSize() + 2 * BUTTON_INSET);
-        toolbarButtonSize = (float)Math.ceil(buttonSize);
+        float maxIconSize = 0, uiScale = Scl.scl();
+        float eyeWidth = ((TextureRegionDrawable)GroupsHud.drawable("list")).getRegion().width;
+        for (String icon : new String[]{"move", "refresh", "flipX", "flipY", "list", "eye", "eyeOff", "cancel", "left", "right", "up", "down", "grid", "bookOpen"}) {
+            var region = ((TextureRegionDrawable)GroupsHud.drawable(icon)).getRegion();
+            float factor = icon.equals("eye") || icon.equals("eyeOff") ? eyeWidth / region.width : 1;
+            TextureRegionDrawable drawable = new TextureRegionDrawable(region);
+            drawable.setMinWidth(region.width * factor / uiScale);
+            drawable.setMinHeight(region.height * factor / uiScale);
+            toolbarIcons.put(icon, drawable);
+            maxIconSize = Math.max(maxIconSize, Math.max(drawable.getMinWidth(), drawable.getMinHeight()));
+        }
+        naturalToolbarSize = maxIconSize + 2 * TOOLBAR_INSET;
+        sizeToolbar(44);
         toolbar.left();
+        toolbar.setRound(false);
         toolbar.touchable = Touchable.childrenOnly;
         name = "control-groups-editor";
         background(Tex.pane);
@@ -126,7 +141,7 @@ final class HudEditor extends Table {
         numberRow(projection, "base", () -> s.baseSize, () -> 8, .01, 4096, value -> s.baseSize = (float)value);
         numberRow(projection, "compression", () -> s.compression * 100, () -> 20, 0, 100,
             value -> s.compression = (float)value / 100);
-        numberRow(projection, "occupancy", () -> s.occupancy * 100, () -> 80, 0, 100,
+        numberRow(projection, "occupancy", () -> s.occupancy * 100, () -> 100, 0, 300,
             value -> s.occupancy = (float)value / 100);
 
         telemetry = section(content, "telemetry", diagnostics, false, true);
@@ -231,6 +246,7 @@ final class HudEditor extends Table {
 
     private void refreshToolbar(int columns) {
         toolbarColumns = columns;
+        toolbarUiScale = Scl.scl();
         toolbar.clearChildren();
         ImageButton move = button("move", "move", () -> {});
         move.addListener(new InputListener() {
@@ -266,11 +282,29 @@ final class HudEditor extends Table {
     }
 
     private ImageButton button(String icon, String key, Runnable action) {
-        ImageButton button = iconButton(hud, icon, key, action);
+        ImageButton button = iconButton(hud, toolbarIcons.get(icon), key, action,
+            new ImageButton.ImageButtonStyle(toolbarStyle), TOOLBAR_INSET * toolbarScale);
         button.name = "cg.editor." + key;
-        button.getImageCell().size(toolbarButtonSize - 2 * BUTTON_INSET);
+        // Rounding width and height separately would break equal eye/list widths after uniform scaling.
+        button.setRound(false);
+        toolbarIcon(button, icon);
         toolbar.add(button).size(toolbarButtonSize).padTop(2).padBottom(2).padRight(BUTTON_GAP);
         return button;
+    }
+
+    private void sizeToolbar(float size) {
+        toolbarButtonSize = size;
+        toolbarScale = size / naturalToolbarSize;
+        toolbarStyle = buttonStyle(toolbarScale);
+    }
+
+    private void toolbarIcon(ImageButton button, String name) {
+        var icon = toolbarIcons.get(name);
+        if (button.getStyle().imageUp == icon && button.getImageCell().minWidth() == Scl.scl(icon.getMinWidth() * toolbarScale) &&
+            button.getImageCell().minHeight() == Scl.scl(icon.getMinHeight() * toolbarScale)) return;
+        button.getStyle().imageUp = icon;
+        button.getImageCell().size(icon.getMinWidth() * toolbarScale, icon.getMinHeight() * toolbarScale);
+        button.invalidate();
     }
 
     void positionPanel() {
@@ -285,8 +319,11 @@ final class HudEditor extends Table {
         if (hud.layout.centerSide == HudLayout.Side.BOTTOM) py = hud.y + hud.getHeight() - margin - h;
         setBounds(Mathf.clamp(px, 0, Math.max(0, Core.scene.getWidth() - w)),
             Mathf.clamp(py, 0, Math.max(0, Core.scene.getHeight() - h)), Math.max(1, w), Math.max(1, h));
+        float buttonSize = hud.layout.zeroSize / hud.layout.scale;
+        boolean resized = toolbarButtonSize != buttonSize || toolbarUiScale != Scl.scl();
+        if (resized) sizeToolbar(buttonSize);
         int columns = Math.max(1, Math.min(8, (int)((w / hud.layout.scale - 8) / (toolbarButtonSize + BUTTON_GAP))));
-        if (columns != toolbarColumns) refreshToolbar(columns);
+        if (resized || columns != toolbarColumns) refreshToolbar(columns);
     }
 
     @Override public Element hit(float x, float y, boolean touchable) {
@@ -298,8 +335,8 @@ final class HudEditor extends Table {
     @Override public void act(float delta) {
         if (!visible) return;
         super.act(delta);
-        direction.getStyle().imageUp = GroupsHud.drawable(hud.settings.vertical ? "flipY" : "flipX");
-        eye.getStyle().imageUp = GroupsHud.drawable(hud.settings.projection ? "eye" : "eyeOff");
+        toolbarIcon(direction, hud.settings.vertical ? "flipY" : "flipX");
+        toolbarIcon(eye, hud.settings.projection ? "eye" : "eyeOff");
         eye.setChecked(hud.settings.projection);
         schematic.setChecked(hud.settings.editorSchematic); expand.setChecked(hud.settings.editorExpanded);
         collapse.setDisabled(hud.layout.dock == null); collapse.setChecked(hud.settings.collapse);
@@ -307,7 +344,7 @@ final class HudEditor extends Table {
         toggleColor(collapse, hud.settings.collapse);
         toggleColor(schematic, hud.settings.editorSchematic);
         toggleColor(expand, hud.settings.editorExpanded);
-        collapse.getStyle().imageUp = GroupsHud.drawable(hud.layout.dock == null ? "cancel" : switch (hud.layout.dock) {
+        toolbarIcon(collapse, hud.layout.dock == null ? "cancel" : switch (hud.layout.dock) {
             case LEFT -> "left"; case RIGHT -> "right"; case TOP -> "up"; case BOTTOM -> "down";
         });
         if (telemetryOpen() && hud.model.telemetry) {

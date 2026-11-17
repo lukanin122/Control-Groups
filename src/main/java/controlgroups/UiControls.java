@@ -4,6 +4,7 @@ import arc.Core;
 import arc.graphics.Color;
 import arc.graphics.g2d.Draw;
 import arc.graphics.g2d.Fill;
+import arc.math.geom.Vec2;
 import arc.scene.Element;
 import arc.scene.style.BaseDrawable;
 import arc.scene.style.Drawable;
@@ -14,6 +15,8 @@ import arc.scene.ui.TextField;
 import arc.scene.ui.Tooltip;
 import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Table;
+import arc.util.Align;
+import arc.util.Tmp;
 import mindustry.ui.Styles;
 
 import java.util.function.BooleanSupplier;
@@ -26,6 +29,7 @@ final class UiControls {
     static final float FIELD_WIDTH = 88f;
     static final float BUTTON_SIZE = 40f, BUTTON_GAP = 4f, FIELD_RESET_GAP = 3f, COMBINATION_GAP = 5f;
     static final float BUTTON_INSET = 5f;
+    static final float BUTTON_BORDER = 2f;
     static final float DISCLOSURE_SLOT = 20f;
     static final float RESET_WIDTH = BUTTON_SIZE + FIELD_RESET_GAP;
     private static final Drawable buttonUp = new ButtonBorder(.55f), buttonOver = new ButtonBorder(.75f), buttonDown = new ButtonBorder(.9f);
@@ -33,31 +37,49 @@ final class UiControls {
 
     static void tooltip(GroupsHud hud, Element element, String message) {
         if (message == null || message.isEmpty()) return;
-        element.addListener(new Tooltip(t -> t.background(Styles.black8).margin(4).add(message).color(Color.lightGray)) {
+        Tooltip tooltip = new Tooltip(t -> t.background(Styles.black8).margin(4).add(message).color(Color.lightGray)) {
+            { allowMobile = true; }
             @Override protected void setContainerPosition(Element actor, float x, float y) {
                 Label label = (Label)container.getChildren().first();
                 label.setWrap(false);
                 float width = Math.min(label.getPrefWidth(), Math.max(1, hud.tooltipWidth() - container.getMarginLeft() - container.getMarginRight()));
                 label.setWrap(true);
                 container.getCell(label).width(width / Scl.scl(1));
-                super.setContainerPosition(actor, x, y);
+                // Mindustry UI.addDescTooltip, also used by BuildWheel: below the actor's left edge.
+                targetActor = actor;
+                Vec2 position = actor.localToStageCoordinates(Tmp.v1.setZero());
+                container.pack();
+                container.setPosition(position.x, position.y, Align.topLeft);
+                container.setOrigin(0, actor.getHeight());
             }
-        });
+        };
+        tooltip.container.update(tooltip.container::keepInStage);
+        element.addListener(tooltip);
     }
 
     static void help(GroupsHud hud, Element element, String key) {
         tooltip(hud, element, Core.bundle.get("cg." + key + "-help", ""));
     }
 
-    static ImageButton iconButton(GroupsHud hud, String icon, String tooltipKey, Runnable action) {
+    static ImageButton.ImageButtonStyle buttonStyle(float borderScale) {
         ImageButton.ImageButtonStyle style = new ImageButton.ImageButtonStyle(Styles.emptyi);
-        style.up = style.checked = style.disabled = buttonUp;
-        style.over = style.checkedOver = buttonOver; style.down = buttonDown;
-        style.imageUp = GroupsHud.drawable(icon);
+        style.up = style.checked = style.disabled = borderScale == 1 ? buttonUp : new ButtonBorder(.55f, borderScale);
+        style.over = style.checkedOver = borderScale == 1 ? buttonOver : new ButtonBorder(.75f, borderScale);
+        style.down = borderScale == 1 ? buttonDown : new ButtonBorder(.9f, borderScale);
         style.imageUpColor = style.imageDownColor = style.imageOverColor = style.imageCheckedColor = Color.white;
         style.imageDisabledColor = Color.gray;
+        return style;
+    }
+
+    static ImageButton iconButton(GroupsHud hud, String icon, String tooltipKey, Runnable action) {
+        return iconButton(hud, GroupsHud.drawable(icon), tooltipKey, action, buttonStyle(1), BUTTON_INSET);
+    }
+
+    static ImageButton iconButton(GroupsHud hud, Drawable icon, String tooltipKey, Runnable action,
+                                  ImageButton.ImageButtonStyle style, float inset) {
+        style.imageUp = icon;
         ImageButton button = new ImageButton(style);
-        button.margin(BUTTON_INSET);
+        button.margin(inset);
         // Fonts.getGlyph ignores the requested drawing size. Give its natural glyph a truthful box.
         button.getImageCell().size(Math.max(20, style.imageUp.imageSize()));
         button.clicked(action);
@@ -163,9 +185,11 @@ final class UiControls {
     /** BuildWheel's number-key treatment: a transparent, inward border with brightness-only feedback. */
     private static final class ButtonBorder extends BaseDrawable {
         private final float brightness;
-        ButtonBorder(float brightness) { this.brightness = brightness; }
+        private final float scale;
+        ButtonBorder(float brightness) { this(brightness, 1); }
+        ButtonBorder(float brightness, float scale) { this.brightness = brightness; this.scale = scale; }
         @Override public void draw(float x, float y, float width, float height) {
-            float color = Draw.getColorPacked(), thickness = Math.min(Scl.scl(2), Math.min(width, height) / 2);
+            float color = Draw.getColorPacked(), thickness = Math.min(Scl.scl(BUTTON_BORDER * scale), Math.min(width, height) / 2);
             try {
                 Draw.color(brightness, brightness, brightness, Draw.getColor().a);
                 Fill.rect(x + width / 2, y + thickness / 2, width, thickness);

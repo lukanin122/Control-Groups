@@ -39,6 +39,7 @@ public class SettingsTest {
         assertEquals(ModSettings.FreeSpaceMode.LIMITED, s.freeSpaceMode);
         assertEquals(36, s.iconSize, 0); assertEquals(.2f, s.iconCoefficient, 0);
         assertEquals(32, s.freeMinimum, 0); assertEquals(2, s.counterGap, 0);
+        assertEquals(1, s.occupancy, 0);
         s.useMode(false); assertFalse(s.collapse); s.setCollapse(true);
         s.useMode(true); assertTrue(s.collapse); s.setCollapse(false);
         s.freeMinimum = 10000; s.manualLargestSize = 314;
@@ -55,6 +56,22 @@ public class SettingsTest {
         assertEquals(51, reloaded.iconSize, 0); assertEquals(.77f, reloaded.iconCoefficient, 0);
         assertEquals(9, reloaded.counterGap, 0);
         assertEquals(s.spaceMode, reloaded.spaceMode); assertEquals(s.freeSpaceMode, reloaded.freeSpaceMode);
+    }
+
+    @Test public void occupancyPreservesOldValuesAndSupportsZeroThroughThree() {
+        Settings store = new Settings();
+        store.put("control-groups.occupancy", .8f);
+        assertEquals(.8f, new ModSettings(store).occupancy, 0);
+        for (float value : new float[]{0, .8f, 1, 1.5f, 3}) {
+            ModSettings s = new ModSettings(store); s.occupancy = value; s.changed();
+            assertEquals(value, new ModSettings(store).occupancy, 0);
+        }
+        store.put("control-groups.occupancy", 9);
+        assertEquals(3, new ModSettings(store).occupancy, 0);
+        store.put("control-groups.occupancy", Float.NaN);
+        assertEquals(1, new ModSettings(store).occupancy, 0);
+        assertTrue(UiControls.validNumber("300", 0, 300, false));
+        assertFalse(UiControls.validNumber("301", 0, 300, false));
     }
 
     @Test

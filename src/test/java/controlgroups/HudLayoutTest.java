@@ -14,7 +14,7 @@ public class HudLayoutTest {
         HudLayout layout = new HudLayout(w.model);
         for (int orientation = 0; orientation < 4; orientation++) {
             w.settings.vertical = orientation < 2; w.settings.reverse = orientation % 2 == 1;
-            layout.rebuild(w.settings, w.profiles, 1920, 1080, 1f, false);
+            layout.rebuild(w.settings, 1920, 1080, 1f, false);
             Rect previous = layout.zero;
             for (int index : new int[]{1, 4, 9}) {
                 Rect r = layout.boxes[index].full;
@@ -36,13 +36,13 @@ public class HudLayoutTest {
         TestWorld w = new TestWorld(2); w.add(1, 0); w.add(2, 1);
         w.group(0, 1, 2); w.reconcile(false);
         HudLayout layout = new HudLayout(w.model);
-        layout.rebuild(w.settings, w.profiles, 1000, 800, 1, false);
+        layout.rebuild(w.settings, 1000, 800, 1, false);
         Rect before = new Rect(layout.boxes[0].full);
-        double scale = layout.projectionScale;
+        double scale = layout.boxes[0].projectionScale;
         w.profiles.get(w.types.get(0)).resize = 20;
-        layout.rebuild(w.settings, w.profiles, 1000, 800, 1, false);
+        layout.rebuild(w.settings, 1000, 800, 1, false);
         assertEquals(before, layout.boxes[0].full);
-        assertEquals(scale, layout.projectionScale, 0f);
+        assertEquals(scale, layout.boxes[0].projectionScale, 0f);
         assertEquals(8f, HudLayout.compressed(8, w.settings), 0.001f);
         assertEquals(16f, HudLayout.compressed(48, w.settings), 0.001f);
     }
@@ -57,7 +57,7 @@ public class HudLayoutTest {
         w.reconcile(true);
         HudLayout layout = new HudLayout(w.model);
         for (float scale : new float[]{0.75f, 1, 2}) {
-            layout.rebuild(w.settings, w.profiles, 320, 240, scale, false);
+            layout.rebuild(w.settings, 320, 240, scale, false);
             assertEquals(11, layout.orderCount); assertEquals(10, layout.order[0]);
             for (int i = 0; i < 20; i++) layout.animate(layout.boxes[0], w.settings, false, false, 0.1f);
             Rect shown = layout.boxes[0].shown;
@@ -94,7 +94,7 @@ public class HudLayoutTest {
         HudLayout layout = new HudLayout(w.model);
         for (int direction = 0; direction < 4; direction++) {
             w.settings.vertical = direction < 2; w.settings.reverse = direction % 2 == 1;
-            layout.rebuild(w.settings, w.profiles, 1920, 1080, 1, false);
+            layout.rebuild(w.settings, 1920, 1080, 1, false);
             var a = layout.boxes[0].cells[0].rect;
             var b = layout.boxes[0].cells[2].rect;
             if (w.settings.vertical) assertEquals(!w.settings.reverse, a.y > b.y);

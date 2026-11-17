@@ -190,7 +190,7 @@ public final class GroupsHud extends Element {
         if (sceneWidth != sw || sceneHeight != sh || uiScale != scale || modelRevision != model.revision) dirty = true;
         if (dirty) {
             layout.pixelRatio = Core.graphics.getBackBufferWidth() / Math.max(1f, sw);
-            layout.rebuild(settings, profiles, sw, sh, scale, editing);
+            layout.rebuild(settings, sw, sh, scale, editing);
             setBounds(layout.positionX, layout.positionY, layout.width, layout.height);
             if (settings.collapse && layout.dock == null) { settings.setCollapse(false); settings.changed(); }
             sceneWidth = sw; sceneHeight = sh; uiScale = scale; modelRevision = model.revision;
@@ -279,7 +279,7 @@ public final class GroupsHud extends Element {
             Unit unit = box.group.representative.unit;
             if (GroupModel.available(unit, team) && profiles.allowed(unit.type)) {
                 var profile = profiles.get(unit.type);
-                float pixels = HudLayout.finitePixels((double)layout.projectionPixels(unit.type.hitSize, settings) * profile.resize);
+                float pixels = HudLayout.finitePixels((double)layout.projectionPixels(box, unit.type.hitSize, settings) * profile.resize);
                 Rect area = box.projectionUsable;
                 projection.draw(unit, box.group.index, x + area.x + area.width / 2,
                     y + area.y + area.height / 2, pixels, box.projectionFitSpan,
