@@ -86,6 +86,20 @@ public class SettingsTest {
     }
 
     @Test
+    public void editorPresentationPersistsWithoutInvalidatingGameGeometry() {
+        Settings store = new Settings(); ModSettings s = new ModSettings(store);
+        assertTrue(s.editorSchematic); assertTrue(s.editorExpanded);
+        int revision = s.revision;
+        s.setEditorSchematic(false); s.setEditorExpanded(false);
+        assertEquals(revision, s.revision);
+        ModSettings reloaded = new ModSettings(store);
+        assertFalse(reloaded.editorSchematic); assertFalse(reloaded.editorExpanded);
+        reloaded.setEditorExpanded(true);
+        ModSettings independent = new ModSettings(store);
+        assertFalse(independent.editorSchematic); assertTrue(independent.editorExpanded);
+    }
+
+    @Test
     public void invalidNumbersAndColorsCannotBeCommitted() {
         assertFalse(UiControls.validNumber("NaN", 0, 100, false));
         assertFalse(UiControls.validNumber("Infinity", 0, 100, false));

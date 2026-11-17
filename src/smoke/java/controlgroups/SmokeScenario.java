@@ -2,6 +2,7 @@ package controlgroups;
 
 import arc.Core;
 import arc.files.Fi;
+import arc.graphics.Color;
 import arc.graphics.g2d.Draw;
 import arc.graphics.g2d.GlyphLayout;
 import arc.graphics.g2d.Lines;
@@ -15,6 +16,8 @@ import arc.scene.ui.CheckBox;
 import arc.scene.ui.TextField;
 import arc.scene.ui.ScrollPane;
 import arc.scene.ui.ImageButton;
+import arc.scene.ui.Image;
+import arc.scene.ui.Button;
 import arc.scene.ui.Label;
 import arc.scene.ui.Tooltip;
 import arc.math.geom.Vec2;
@@ -27,6 +30,8 @@ import mindustry.content.UnitTypes;
 import mindustry.core.Version;
 import mindustry.game.Team;
 import mindustry.gen.Unit;
+import mindustry.graphics.Pal;
+import mindustry.ui.Styles;
 
 import java.util.Arrays;
 import java.util.Locale;
@@ -128,7 +133,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
             if (activity.icon != null) require(mindustry.gen.Icon.icons.containsKey(activity.icon) ||
                 (activity == Activity.MOVE && mindustry.gen.Icon.left != null), "Missing activity icon: " + activity.icon);
         }
-        for (String icon : new String[]{"flipX", "flipY", "eyeOff", "move", "settings", "list"}) {
+        for (String icon : new String[]{"flipX", "flipY", "eyeOff", "move", "settings", "list", "grid", "bookOpen"}) {
             require(mindustry.gen.Icon.icons.containsKey(icon), "Missing editor icon: " + icon);
         }
         hud.settings.vertical = true; hud.settings.reverse = false; hud.settings.projection = true;
@@ -239,6 +244,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
 
     private void verifyEditor() {
         require(hud.editing, "Editor did not open");
+        verifyEditorVisuals();
         Element editor = Core.scene.find("control-groups-editor");
         Seq<Element> controls = new Seq<>(); collect(editor, controls);
         ScrollPane settingsScroll = null;
@@ -248,7 +254,6 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
             settingsScroll = scroll;
         }
         require(settingsScroll != null, "Editor scroll pane is missing");
-        float oldScroll = settingsScroll.getScrollY();
         for (Element element : controls) if (element instanceof CheckBox check)
             require(check.getWidth() <= editor.getWidth(), "Editor switch overflow");
         verifyTooltipsAndResets(controls);
@@ -285,6 +290,8 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         require(!hud.model.telemetry && hud.model.reconciliations == closedUpdates, "Collapsed telemetry still collected counters");
         hud.settings.showBuild = true; hud.changed();
         settingsScroll.setScrollY(0); settingsScroll.updateVisualScroll();
+        Core.scene.draw();
+        float oldScroll = settingsScroll.getScrollY();
         float oldX = hud.settings.xFraction, oldY = hud.settings.yFraction, oldBreadth = hud.settings.breadth;
         Element move = Core.scene.find("cg.editor.move");
         require(move != null, "Move control is missing");
@@ -306,6 +313,98 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         hud.settings.breadth = oldBreadth; hud.changed(); Core.scene.act(1f / 60f);
         require(Core.scene.hit(hud.x + hud.getWidth() - 1, hud.y + hud.getHeight() / 2, true) == hud,
             "Editor panel intercepted the frame edge");
+    }
+
+    private void verifyEditorVisuals() {
+        Element editor = Core.scene.find("control-groups-editor");
+        ScrollPane body = (ScrollPane)Core.scene.find("cg.editor.settings");
+        require(hud.settings.editorExpanded && hud.settings.editorSchematic, "New editor defaults are disabled");
+        Core.scene.draw();
+        String[] keys = {"move", "rotate", "reverse", "units", "projection", "collapse", "editor-schematic", "editor-expanded"};
+        Rect[] before = new Rect[keys.length];
+        for (int i = 0; i < keys.length; i++) {
+            ImageButton button = (ImageButton)Core.scene.find("cg.editor." + keys[i]);
+            Vec2 point = button.localToStageCoordinates(new Vec2());
+            before[i] = new Rect(point.x, point.y, button.getWidth(), button.getHeight());
+            Image image = button.getImage();
+            float inset = image.x + image.getImageX();
+            require(inset >= 5 * hud.layout.scale && button.getWidth() - inset - image.getImageWidth() >= 5 * hud.layout.scale,
+                "Editor icon touches its border: " + keys[i]);
+            require(button.getStyle().up != button.getStyle().over && button.getStyle().over != button.getStyle().down,
+                "Border feedback states are identical");
+        }
+        ImageButton projection = (ImageButton)Core.scene.find("cg.editor.projection");
+        ImageButton collapse = (ImageButton)Core.scene.find("cg.editor.collapse");
+        require(projection.getStyle().imageUpColor == Color.white && collapse.getStyle().imageUpColor == Color.gray,
+            "Toolbar switches do not use white/gray status");
+        int revision = hud.settings.revision;
+        Rect group = new Rect(hud.layout.boxes[0].full);
+        fireButton("cg.editor.editor-schematic"); Core.scene.act(.02f);
+        require(!hud.settings.editorSchematic && hud.settings.revision == revision && group.equals(hud.layout.boxes[0].full),
+            "Schematic switch changed game geometry");
+        fireButton("cg.editor.editor-schematic"); Core.scene.act(.02f);
+
+        Button header = (Button)Core.scene.find("cg.section.main-settings");
+        Label label = (Label)Core.scene.find("cg.section-label.main-settings");
+        Image arrow = (Image)Core.scene.find("cg.section-icon.main-settings");
+        float textX = label.x, center = arrow.x + arrow.getWidth() / 2;
+        var naturalArrow = (arc.scene.style.TextureRegionDrawable)GroupsHud.drawable("downOpen");
+        require(arrow.getImageWidth() == naturalArrow.getRegion().width / 2f &&
+            arrow.getImageHeight() == naturalArrow.getRegion().height / 2f && arrow.color.equals(Pal.accent),
+            "Disclosure glyph is not actually drawn at half size");
+        float indent = arrow.getImageWidth();
+        require(header.getStyle().over == null && header.getStyle().down == null, "Header still paints a hover background");
+        fireButton("cg.section.main-settings"); Core.scene.act(.2f); Core.scene.draw();
+        require(label.x == textX && arrow.x + arrow.getWidth() / 2 == center, "Header text/arrow jumps when collapsed");
+        fireButton("cg.section.main-settings"); Core.scene.act(.2f); Core.scene.draw();
+        float mainX = label.localToStageCoordinates(new Vec2()).x;
+        float sectionX = Core.scene.find("cg.section-label.space-allocation").localToStageCoordinates(new Vec2()).x;
+        float itemX = Core.scene.find("cg.label.space-proportional").localToStageCoordinates(new Vec2()).x;
+        require(Math.abs(sectionX - mainX - indent) < .51f &&
+            Math.abs(itemX - sectionX - indent) < .51f, "Nested rows lack consistent hierarchical indentation");
+
+        fireButton("cg.section.group-icon-settings");
+        TextField iconField = (TextField)Core.scene.find("cg.value.icon-size");
+        showElement(iconField);
+        CheckBox influence = (CheckBox)Core.scene.find("cg.toggle.icon-influence");
+        float fieldX = iconField.localToStageCoordinates(new Vec2()).x;
+        float toggleX = influence.getImage().localToStageCoordinates(new Vec2()).x;
+        require(Math.abs(fieldX - toggleX) < .51f, "Fields and switches do not start in the same column");
+        Element reset = Core.scene.find("cg.reset.icon-size");
+        require(Math.abs(reset.localToStageCoordinates(new Vec2()).x - fieldX - iconField.getWidth() - 3 * hud.layout.scale) < .51f,
+            "Numeric reset gap is not 3 UI pixels");
+        fireButton("cg.section.group-icon-settings");
+        fireButton("cg.section.advanced-settings"); fireButton("cg.section.projection-settings");
+        TextField manual = (TextField)Core.scene.find("cg.value.manual-size"); showElement(manual);
+        Element manualToggle = Core.scene.find("cg.toggle.manual-largest");
+        require(Math.abs(manual.localToStageCoordinates(new Vec2()).x - manualToggle.localToStageCoordinates(new Vec2()).x -
+            manualToggle.getWidth() - 5 * hud.layout.scale) < .51f, "Combined setting gap is not 5 UI pixels");
+        fireButton("cg.section.projection-settings"); fireButton("cg.section.advanced-settings");
+
+        fireButton("cg.section.telemetry"); Core.scene.act(.02f);
+        Core.scene.setKeyboardFocus(iconField);
+        fireButton("cg.editor.editor-expanded"); Core.scene.act(.02f); Core.scene.draw();
+        require(!body.visible && ((arc.scene.ui.layout.Table)editor).getBackground() == null && !hud.model.telemetry &&
+            Core.scene.getKeyboardFocus() != iconField, "Hidden settings retained background, telemetry or keyboard focus");
+        require(editor.hit(editor.getWidth() * .75f, editor.getHeight() * .2f, true) == null,
+            "Hidden settings intercept input outside toolbar controls");
+        for (int i = 0; i < keys.length; i++) {
+            Element button = Core.scene.find("cg.editor." + keys[i]); Vec2 point = button.localToStageCoordinates(new Vec2());
+            require(Math.abs(point.x - before[i].x) < .01f && Math.abs(point.y - before[i].y) < .01f, "Toolbar moved when settings were hidden");
+        }
+        fireButton("cg.editor.editor-expanded"); Core.scene.act(.02f);
+        require(body.visible && hud.model.telemetry && hud.settings.revision == revision, "Reopening settings lost section state or invalidated geometry");
+        fireButton("cg.section.telemetry");
+        body.setScrollY(0); body.updateVisualScroll(); Core.scene.draw();
+        Rect z = hud.layout.zero;
+        float[][] samples = {{z.x + 2, z.y + z.height / 2}, {z.x + z.width - 2, z.y + z.height / 2},
+            {z.x + z.width / 2, z.y + 2}, {z.x + z.width / 2, z.y + z.height - 2}};
+        for (float[] sample : samples) {
+            Vec2 pixel = Core.scene.getViewport().project(new Vec2(hud.x + sample[0], hud.y + sample[1]));
+            var image = ScreenUtils.getFrameBufferPixmap(Math.round(pixel.x), Math.round(pixel.y), 1, 1);
+            try { require((image.get(0, 0) >>> 8) == (Pal.accent.rgba() >>> 8), "Editor frame obscures the settings button border"); }
+            finally { image.dispose(); }
+        }
     }
 
     private void verifyUnitFields() {
@@ -419,7 +518,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                 require(Core.scene.find("cg.reset." + element.name.substring("cg.value.".length())) instanceof ImageButton,
                     "Field has no reset: " + element.name);
             for (var listener : element.getListeners()) if (listener instanceof Tooltip tooltip) {
-                require(tooltip.getContainer().getBackground() == null, "Tooltip still has a background");
+                require(tooltip.getContainer().getBackground() == Styles.black8, "Tooltip differs from native translucent help");
                 for (Element child : tooltip.getContainer().getChildren()) if (child instanceof Label label)
                     require(label.color.equals(arc.graphics.Color.lightGray), "Tooltip color differs from native help");
             }
@@ -491,7 +590,8 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
             "Selection: group single/double, type, projection PASS%nHide/resume without hidden scans: PASS%n" +
             "Editor move/clamp, edge resize, field focus/keyboard input/reset: PASS%n" +
             "Building selection/native input/block placement prevention: PASS%n" +
-            "Telemetry off/on/off, reset buttons and background-free tooltips: PASS%n" +
+            "Telemetry off/on/off, reset buttons and native translucent tooltips: PASS%n" +
+            "Editor visual controls, fixed toolbar, hierarchy, columns and complete yellow settings border: PASS%n" +
             "Geometry edits reuse game data; detailed icon threshold/fallback: PASS%n" +
             "Internal projection/OpenGL and actual 640x480/320x240 windows: PASS%n" +
             "All unit rows, avatar bans, ban/unban and per-type resets: PASS%n" +

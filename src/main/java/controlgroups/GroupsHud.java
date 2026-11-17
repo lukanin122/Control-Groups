@@ -230,20 +230,22 @@ public final class GroupsHud extends Element {
         float savedColor = Draw.getColorPacked(), savedMix = Draw.getMixColorPacked(), stroke = Lines.getStroke();
         try {
             Draw.color(); Draw.mixcol();
-            panel(layout.zero, editing ? EDITOR_COLOR : null, 1f);
-            icon(settingsIcon, x + layout.zero.x + layout.zero.width / 2f, y + layout.zero.y + layout.zero.height / 2f, 24f * layout.scale, 0, Color.white, 1f);
             for (int i = 0; i < layout.orderCount; i++) {
                 HudLayout.Box box = layout.boxes[layout.order[i]];
                 if (box.visible) drawBox(box, editing ? 0.32f : 1f);
-                if (editing) {
+                if (editing && settings.editorSchematic) {
                     Rect guide = box.visible ? box.full : box.guide;
                     frame(guide.x, guide.y, guide.width, guide.height, Color.lightGray, Math.max(BORDER, 3 * layout.scale), 0.45f);
                 }
             }
-            if (editing) {
+            if (editing && settings.editorSchematic) {
                 frame(0, 0, width, height, Color.lightGray, Math.max(BORDER, 3 * layout.scale), 0.75f);
                 highlightEdges();
             }
+            // The settings button owns its complete border, including where the editor's frame crosses it.
+            panel(layout.zero, editing ? EDITOR_COLOR : null, 1f);
+            icon(settingsIcon, x + layout.zero.x + layout.zero.width / 2f, y + layout.zero.y + layout.zero.height / 2f,
+                24f * layout.scale, 0, Color.white, 1f);
         } finally {
             Draw.color(savedColor); Draw.mixcol(savedMix); Lines.stroke(stroke);
             if (model.telemetry) drawNanos = System.nanoTime() - started;

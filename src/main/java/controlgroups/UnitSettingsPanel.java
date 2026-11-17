@@ -33,30 +33,30 @@ final class UnitSettingsPanel extends Table {
         Table title = new Table();
         title.add(text("units")).growX().left().pad(6);
         var close = iconButton(hud, "cancel", "close", () -> { open = false; Core.scene.unfocus(this); });
-        title.add(close).size(36);
+        title.add(close).size(BUTTON_SIZE);
         add(title).growX().row();
         Table list = new Table();
         list.add("").width(38);
-        list.add(text("color")).width(COLOR_WIDTH + 32);
-        list.add(text("tier")).width(INDEX_WIDTH + 32);
-        list.add(text("type")).width(INDEX_WIDTH + 32);
-        list.add(text("resize")).width(96 + 32);
+        list.add(text("color")).width(COLOR_WIDTH + RESET_WIDTH);
+        list.add(text("tier")).width(INDEX_WIDTH + RESET_WIDTH);
+        list.add(text("type")).width(INDEX_WIDTH + RESET_WIDTH);
+        list.add(text("resize")).width(96 + RESET_WIDTH);
         var banTitle = list.add(text("ban")).width(48).get();
         help(hud, banTitle, "ban"); list.row();
         for (var profile : hud.profiles.all) {
             String key = "unit." + profile.unit.name + ".";
             var image = list.image(profile.unit.uiIcon).size(32).pad(3).get();
             tooltip(hud, image, profile.unit.localizedName + "\n" + profile.unit.name);
-            list.add(colorField(profile, key)).width(COLOR_WIDTH + 32).pad(2);
+            list.add(colorField(profile, key)).width(COLOR_WIDTH + RESET_WIDTH).pad(2);
             list.add(number(hud, key + "tier", () -> profile.tier, () -> profile.defaultTier, 1, 1024, true, value -> {
                 profile.tier = (int)value; hud.profileChanged(profile);
-            })).width(INDEX_WIDTH + 32).pad(2);
+            })).width(INDEX_WIDTH + RESET_WIDTH).pad(2);
             list.add(number(hud, key + "type", () -> profile.order, () -> profile.defaultOrder, 1, 1024, true, value -> {
                 profile.order = (int)value; hud.profileChanged(profile);
-            })).width(INDEX_WIDTH + 32).pad(2);
+            })).width(INDEX_WIDTH + RESET_WIDTH).pad(2);
             list.add(number(hud, key + "resize", () -> profile.resize * 100, () -> 100, 1, 2000, false, value -> {
                 profile.resize = (float)value / 100; hud.profileChanged(profile);
-            })).width(96 + 32).pad(2);
+            })).width(96 + RESET_WIDTH).pad(2);
 
             ImageButton.ImageButtonStyle style = new ImageButton.ImageButtonStyle(Styles.emptyi);
             style.up = style.over = style.down = style.checked = Styles.defaultField.background;
@@ -79,6 +79,7 @@ final class UnitSettingsPanel extends Table {
 
     private Table colorField(UnitProfiles.Profile profile, String key) {
         Table control = new Table();
+        control.left();
         TextField.TextFieldStyle style = new TextField.TextFieldStyle(Styles.defaultField);
         style.fontColor = new Color(profile.color); style.focusedFontColor = style.fontColor;
         TextField field = new TextField(colorText(profile.color), style);
@@ -96,7 +97,7 @@ final class UnitSettingsPanel extends Table {
         });
         reset.name = "cg.reset." + key + "color";
         control.add(field).width(COLOR_WIDTH).minWidth(0).growX();
-        control.add(reset).size(28).padLeft(4);
+        control.add(reset).size(BUTTON_SIZE).padLeft(FIELD_RESET_GAP);
         return control;
     }
 

@@ -16,6 +16,7 @@ public final class ModSettings {
     public boolean adapt = true, advanced, checkMotion = true, showBuild = true;
     public boolean iconInfluence = true, minTrackingSquare = true, internalProjection, fullIcons = true, hideSingles;
     public boolean manualLargest;
+    public boolean editorSchematic = true, editorExpanded = true;
     public SpaceMode spaceMode = SpaceMode.PROPORTIONAL;
     public FreeSpaceMode freeSpaceMode = FreeSpaceMode.LIMITED;
     public float length = 640f, breadth = 240f, xFraction, yFraction = 0.5f;
@@ -46,6 +47,8 @@ public final class ModSettings {
         fullIcons = bool("full-icons", fullIcons); hideSingles = bool("hide-singles", hideSingles);
         manualLargest = bool("manual-largest", manualLargest);
         manualSizeChosen = bool("manual-size-chosen", manualLargest);
+        editorSchematic = bool("editor-schematic", editorSchematic);
+        editorExpanded = bool("editor-expanded", editorExpanded);
         spaceMode = enumValue("space-mode", SpaceMode.values(), spaceMode);
         freeSpaceMode = enumValue("free-mode", FreeSpaceMode.values(), freeSpaceMode);
         length = number("length", length, 160, 8192); breadth = number("breadth", breadth, 48, 4096);
@@ -77,6 +80,15 @@ public final class ModSettings {
 
     public boolean commandContext() { return commandContext; }
 
+    /** Presentation preferences do not invalidate game data or HUD geometry. */
+    public void setEditorSchematic(boolean enabled) {
+        editorSchematic = enabled; put("editor-schematic", enabled);
+    }
+
+    public void setEditorExpanded(boolean enabled) {
+        editorExpanded = enabled; put("editor-expanded", enabled);
+    }
+
     public void setCollapse(boolean enabled) {
         if (commandContext) collapseCommand = enabled;
         else collapseBuild = enabled;
@@ -94,6 +106,7 @@ public final class ModSettings {
         put("internal-projection", internalProjection); put("full-icons", fullIcons); put("hide-singles", hideSingles);
         put("manual-largest", manualLargest); put("manual-size", manualLargestSize);
         put("manual-size-chosen", manualSizeChosen);
+        put("editor-schematic", editorSchematic); put("editor-expanded", editorExpanded);
         put("space-mode", spaceMode.name()); put("free-mode", freeSpaceMode.name());
         put("length", length); put("breadth", breadth); put("x", xFraction); put("y", yFraction);
         put("absolute-x", absoluteX); put("absolute-y", absoluteY);

@@ -7,16 +7,20 @@ import arc.math.Mathf;
 import arc.scene.Element;
 import arc.scene.event.InputEvent;
 import arc.scene.event.InputListener;
+import arc.scene.event.Touchable;
+import arc.scene.style.TextureRegionDrawable;
 import arc.scene.ui.Button;
 import arc.scene.ui.CheckBox;
+import arc.scene.ui.Image;
 import arc.scene.ui.ImageButton;
 import arc.scene.ui.Label;
 import arc.scene.ui.ScrollPane;
 import arc.scene.ui.layout.Collapser;
+import arc.scene.ui.layout.Scl;
 import arc.scene.ui.layout.Table;
+import arc.util.Scaling;
 import mindustry.gen.Tex;
 import mindustry.graphics.Pal;
-import mindustry.ui.Styles;
 
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -28,9 +32,12 @@ import static controlgroups.UiControls.*;
 /** A single editor for the live HUD. Section state is presentation, never another game model. */
 final class HudEditor extends Table {
     private static final float MIN_PANEL_WIDTH = 480f;
+    private final float sectionIndent, toolbarButtonSize;
+    private final TextureRegionDrawable rightArrow, downArrow;
     private final GroupsHud hud;
     private final Table toolbar = new Table();
-    private ImageButton eye, collapse, direction;
+    private ImageButton eye, collapse, direction, schematic, expand;
+    private final ScrollPane settingsScroll;
     private final Label stats = new Label("");
     private final Collapser telemetry;
     private int toolbarColumns;
@@ -38,12 +45,19 @@ final class HudEditor extends Table {
 
     HudEditor(GroupsHud hud) {
         this.hud = hud;
+        rightArrow = disclosure("rightOpen"); downArrow = disclosure("downOpen");
+        sectionIndent = downArrow.getMinWidth() / Scl.scl();
+        float buttonSize = BUTTON_SIZE;
+        for (String icon : new String[]{"move", "refresh", "flipX", "flipY", "list", "eye", "eyeOff", "cancel", "left", "right", "up", "down", "grid", "bookOpen"})
+            buttonSize = Math.max(buttonSize, GroupsHud.drawable(icon).imageSize() + 2 * BUTTON_INSET);
+        toolbarButtonSize = (float)Math.ceil(buttonSize);
         toolbar.left();
+        toolbar.touchable = Touchable.childrenOnly;
         name = "control-groups-editor";
         background(Tex.pane);
+        margin(4); top().left();
         Table content = new Table();
         content.top().left();
-        content.add(toolbar).growX().left().padBottom(3).row();
         var s = hud.settings;
         Table main = new Table(), advanced = new Table(), diagnostics = new Table();
         section(content, "main-settings", main, true, true);
@@ -118,11 +132,14 @@ final class HudEditor extends Table {
         telemetry = section(content, "telemetry", diagnostics, false, true);
         stats.setWrap(true);
         diagnostics.add(stats).growX().left().pad(4).row();
-        ScrollPane scroll = new ScrollPane(content);
-        scroll.setScrollingDisabled(true, false);
-        scroll.setFlickScroll(false);
-        add(scroll).grow().pad(4);
-        refreshToolbar(6);
+        settingsScroll = new ScrollPane(content);
+        settingsScroll.name = "cg.editor.settings";
+        settingsScroll.setScrollingDisabled(true, false);
+        settingsScroll.setFlickScroll(false);
+        add(toolbar).growX().left().top().row();
+        add(settingsScroll).grow().minHeight(0);
+        refreshToolbar(8);
+        applyExpanded();
     }
 
     private double automaticLargest() { return Math.max(.01, hud.profiles.largestHitSize); }
@@ -147,20 +164,22 @@ final class HudEditor extends Table {
         Table controls = new Table() {
             private boolean narrow;
             @Override public void layout() {
-                boolean next = getWidth() < 155 * hud.layout.scale;
+                boolean next = getWidth() < toggle.getPrefWidth() +
+                    (COMBINATION_GAP + FIELD_WIDTH + RESET_WIDTH) * hud.layout.scale;
                 if (next != narrow) { narrow = next; arrange(); }
                 super.layout();
             }
             private void arrange() {
                 clearChildren();
-                add(toggle).left().padRight(4);
+                add(toggle).left().padRight(narrow ? 0 : COMBINATION_GAP);
                 if (narrow) row();
-                add(field).growX().minWidth(0);
+                add(field).growX().minWidth(0).left();
             }
         };
         // Start with the same actors; resizing only changes the two cell positions.
-        controls.add(toggle).left().padRight(4);
-        controls.add(field).growX().minWidth(0);
+        controls.left();
+        controls.add(toggle).left().padRight(COMBINATION_GAP);
+        controls.add(field).growX().minWidth(0).left();
         return controls;
     }
 
@@ -172,22 +191,43 @@ final class HudEditor extends Table {
                 return super.hit(x, y, touchable);
             }
         }.setDuration(.15f);
-        Button.ButtonStyle style = new Button.ButtonStyle(Styles.defaultb);
-        style.up = null; style.over = style.down = Styles.flatOver;
-        Button header = new Button(style);
+        Button header = new Button(new Button.ButtonStyle());
         header.name = "cg.section." + key;
-        var icon = header.image(GroupsHud.drawable(open ? "downOpen" : "rightOpen")).size(20).padRight(4).get();
+        var icon = new Image(open ? downArrow : rightArrow, Scaling.none);
+        icon.name = "cg.section-icon." + key;
+        header.add(icon).size(DISCLOSURE_SLOT).padRight(4);
         Label label = new Label(text(key));
+        label.name = "cg.section-label." + key;
         label.setFontScale(primary ? 1.12f : 1.04f); label.setWrap(true);
         header.add(label).growX().left();
         header.clicked(() -> { collapser.toggle(); if (key.equals("telemetry")) hud.setTelemetry(!collapser.isCollapsed()); });
-        header.update(() -> icon.setDrawable(GroupsHud.drawable(collapser.isCollapsed() ? "rightOpen" : "downOpen")));
+        header.update(() -> {
+            icon.setDrawable(collapser.isCollapsed() ? rightArrow : downArrow);
+            icon.setColor(collapser.isCollapsed() ? Color.white : Pal.accent);
+            label.setColor(header.isOver() ? Pal.accent : Color.white);
+        });
         parent.add(header).growX().minWidth(0).padTop(primary ? 9 : 6).padBottom(3).row();
-        parent.add(collapser).growX().minWidth(0).padLeft(primary ? 0 : 4).row();
+        parent.add(collapser).growX().minWidth(0).padLeft(sectionIndent).row();
         return collapser;
     }
 
-    boolean telemetryOpen() { return !telemetry.isCollapsed(); }
+    boolean telemetryOpen() { return hud.settings.editorExpanded && !telemetry.isCollapsed(); }
+
+    private static TextureRegionDrawable disclosure(String name) {
+        var region = ((TextureRegionDrawable)GroupsHud.drawable(name)).getRegion();
+        TextureRegionDrawable arrow = new TextureRegionDrawable(region);
+        // Use the same glyph texture, but bypass Fonts.getGlyph's natural-size draw override.
+        arrow.setMinWidth(region.width / 2f); arrow.setMinHeight(region.height / 2f);
+        return arrow;
+    }
+
+    private void applyExpanded() {
+        boolean expanded = hud.settings.editorExpanded;
+        settingsScroll.visible = expanded;
+        setBackground(expanded ? Tex.pane : null);
+        if (!expanded) Core.scene.unfocus(settingsScroll);
+        hud.setTelemetry(hud.editing && telemetryOpen());
+    }
 
     private void refreshToolbar(int columns) {
         toolbarColumns = columns;
@@ -217,12 +257,19 @@ final class HudEditor extends Table {
         collapse = button("left", "collapse", () -> {
             if (hud.layout.dock != null) { hud.settings.setCollapse(!hud.settings.collapse); hud.changed(); }
         });
+        if (6 % columns == 0) toolbar.row();
+        schematic = button("grid", "editor-schematic", () -> hud.settings.setEditorSchematic(!hud.settings.editorSchematic));
+        if (7 % columns == 0) toolbar.row();
+        expand = button("bookOpen", "editor-expanded", () -> {
+            hud.settings.setEditorExpanded(!hud.settings.editorExpanded); applyExpanded();
+        });
     }
 
     private ImageButton button(String icon, String key, Runnable action) {
         ImageButton button = iconButton(hud, icon, key, action);
         button.name = "cg.editor." + key;
-        toolbar.add(button).size(36).pad(1);
+        button.getImageCell().size(toolbarButtonSize - 2 * BUTTON_INSET);
+        toolbar.add(button).size(toolbarButtonSize).padTop(2).padBottom(2).padRight(BUTTON_GAP);
         return button;
     }
 
@@ -238,12 +285,13 @@ final class HudEditor extends Table {
         if (hud.layout.centerSide == HudLayout.Side.BOTTOM) py = hud.y + hud.getHeight() - margin - h;
         setBounds(Mathf.clamp(px, 0, Math.max(0, Core.scene.getWidth() - w)),
             Mathf.clamp(py, 0, Math.max(0, Core.scene.getHeight() - h)), Math.max(1, w), Math.max(1, h));
-        int columns = Math.max(1, Math.min(6, (int)(w / hud.layout.scale / 38)));
+        int columns = Math.max(1, Math.min(8, (int)((w / hud.layout.scale - 8) / (toolbarButtonSize + BUTTON_GAP))));
         if (columns != toolbarColumns) refreshToolbar(columns);
     }
 
     @Override public Element hit(float x, float y, boolean touchable) {
         if (hud.onEditorEdge(this.x + x - hud.x, this.y + y - hud.y)) return null;
+        if (!hud.settings.editorExpanded) return toolbar.hit(x - toolbar.x, y - toolbar.y, touchable);
         return super.hit(x, y, touchable);
     }
 
@@ -252,11 +300,13 @@ final class HudEditor extends Table {
         super.act(delta);
         direction.getStyle().imageUp = GroupsHud.drawable(hud.settings.vertical ? "flipY" : "flipX");
         eye.getStyle().imageUp = GroupsHud.drawable(hud.settings.projection ? "eye" : "eyeOff");
-        direction.setChecked(hud.settings.reverse); eye.setChecked(hud.settings.projection);
+        eye.setChecked(hud.settings.projection);
+        schematic.setChecked(hud.settings.editorSchematic); expand.setChecked(hud.settings.editorExpanded);
         collapse.setDisabled(hud.layout.dock == null); collapse.setChecked(hud.settings.collapse);
-        accent(direction, hud.settings.reverse);
-        accent(eye, hud.settings.projection);
-        accent(collapse, hud.settings.collapse);
+        toggleColor(eye, hud.settings.projection);
+        toggleColor(collapse, hud.settings.collapse);
+        toggleColor(schematic, hud.settings.editorSchematic);
+        toggleColor(expand, hud.settings.editorExpanded);
         collapse.getStyle().imageUp = GroupsHud.drawable(hud.layout.dock == null ? "cancel" : switch (hud.layout.dock) {
             case LEFT -> "left"; case RIGHT -> "right"; case TOP -> "up"; case BOTTOM -> "down";
         });
@@ -271,10 +321,9 @@ final class HudEditor extends Table {
         }
     }
 
-    private static void accent(ImageButton button, boolean active) {
+    private static void toggleColor(ImageButton button, boolean active) {
         var style = button.getStyle();
-        style.imageUpColor = active ? Pal.accent : Color.white;
-        style.imageOverColor = style.imageUpColor;
-        style.imageCheckedColor = style.imageUpColor;
+        style.imageUpColor = active ? Color.white : Color.gray;
+        style.imageOverColor = style.imageDownColor = style.imageCheckedColor = style.imageUpColor;
     }
 }
