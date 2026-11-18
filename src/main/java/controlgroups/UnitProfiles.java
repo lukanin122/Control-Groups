@@ -1,10 +1,8 @@
 package controlgroups;
 
 import arc.Settings;
-import arc.Core;
 import arc.graphics.Color;
 import arc.graphics.g2d.TextureRegion;
-import arc.struct.ObjectMap;
 import arc.struct.Seq;
 import mindustry.type.UnitType;
 import mindustry.world.Block;
@@ -41,13 +39,14 @@ public final class UnitProfiles {
         public final Color defaultColor = new Color();
         public boolean defaultBanned;
         public TextureRegion uiIcon, fullIcon;
-        public double projectionRadius, advancedProjectionRadius;
+        public double projectionRadius, advancedProjectionRadius, fallbackRadiusRatio;
 
-        private Profile(UnitType unit) {
+        private Profile(UnitType unit, ProjectionBounds bounds) {
             this.unit = unit;
-            uiIcon = unit.uiIcon; fullIcon = unit.fullIcon;
-            projectionRadius = ProjectionBounds.radius(unit, false);
-            advancedProjectionRadius = ProjectionBounds.radius(unit, true);
+            uiIcon = bounds.trim(unit.uiIcon); fullIcon = bounds.trim(unit.fullIcon);
+            projectionRadius = bounds.radius(unit, false);
+            advancedProjectionRadius = bounds.radius(unit, true);
+            fallbackRadiusRatio = bounds.fallbackRadius(unit);
         }
     }
 
@@ -70,8 +69,9 @@ public final class UnitProfiles {
         for (UnitType type : types) capacity = Math.max(capacity, type.id + 1);
         byId = new Profile[capacity];
         allowedById = new boolean[capacity];
+        ProjectionBounds bounds = new ProjectionBounds();
         for (UnitType type : types) {
-            Profile profile = new Profile(type);
+            Profile profile = new Profile(type, bounds);
             defaults(profile);
             profile.defaultTier = profile.tier; profile.defaultOrder = profile.order;
             profile.defaultColor.set(profile.color);
@@ -118,38 +118,6 @@ public final class UnitProfiles {
 
     public boolean allowed(UnitType type) {
         return type != null && type.id >= 0 && type.id < allowedById.length && allowedById[type.id];
-    }
-
-    /** Cached UV views trim transparent padding, so counterGap measures visible image-to-glyph distance. */
-    public void prepareIcons() {
-        if (Core.atlas == null) return;
-        ObjectMap<TextureRegion, TextureRegion> cropped = new ObjectMap<>();
-        for (int i = 0; i < all.size; i++) {
-            Profile profile = all.get(i);
-            profile.uiIcon = trim(profile.unit.uiIcon, cropped);
-            profile.fullIcon = trim(profile.unit.fullIcon, cropped);
-        }
-    }
-
-    private static TextureRegion trim(TextureRegion region, ObjectMap<TextureRegion, TextureRegion> cache) {
-        if (region == null || region.texture == null || !region.found()) return region;
-        TextureRegion known = cache.get(region);
-        if (known != null) return known;
-        TextureRegion result = region;
-        try {
-            var pixmap = Core.atlas.getPixmap(region);
-            int left = pixmap.width, right = -1, top = pixmap.height, bottom = -1;
-            for (int y = 0; y < pixmap.height; y++) for (int x = 0; x < pixmap.width; x++) {
-                if ((pixmap.get(x, y) & 255) == 0) continue;
-                left = Math.min(left, x); right = Math.max(right, x);
-                top = Math.min(top, y); bottom = Math.max(bottom, y);
-            }
-            if (right >= left && bottom >= top) result = new TextureRegion(region, left, top, right - left + 1, bottom - top + 1);
-        } catch (RuntimeException ignored) {
-            // Standalone textures supplied by a mod need not have an atlas pixmap. Keep their original UVs.
-        }
-        cache.put(region, result);
-        return result;
     }
 
     /** Metadata only, invoked on profile edits rather than scanning live units. */

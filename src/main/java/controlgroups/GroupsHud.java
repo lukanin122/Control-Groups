@@ -70,7 +70,6 @@ public final class GroupsHud extends Element {
         name = "control-groups-hud";
         settings = new ModSettings(Core.settings);
         profiles = new UnitProfiles(Core.settings, Vars.content.units(), Vars.content.blocks());
-        profiles.prepareIcons();
         settings.initializeLargest(profiles.largestHitSize);
         model = new GroupModel(profiles, Vars.content.units());
         layout = new HudLayout(model, this::measureCounter);

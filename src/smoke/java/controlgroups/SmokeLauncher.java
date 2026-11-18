@@ -9,6 +9,8 @@ import arc.scene.Element;
 import mindustry.core.Version;
 import mindustry.desktop.DesktopLauncher;
 import mindustry.game.EventType.ClientLoadEvent;
+import mindustry.game.EventType.AtlasPackEvent;
+import arc.graphics.g2d.TextureRegion;
 
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -19,12 +21,16 @@ public final class SmokeLauncher extends DesktopLauncher {
     private final Fi reports;
     private boolean loaded;
     private LongConsumer scenario;
+    private final java.util.Map<String, float[]> sourceHulls = new java.util.HashMap<>();
 
     private SmokeLauncher(String[] args) {
         super(new String[0]);
         reports = new Fi(args[0]); reports.mkdirs();
         reports.child("FAILED.txt").delete();
         Events.on(ClientLoadEvent.class, event -> loaded = true);
+        Events.on(AtlasPackEvent.class, event -> {
+            for (var region : Core.atlas.getRegions()) sourceHulls.put(region.name, visibleHull(region));
+        });
     }
 
     public static void main(String[] args) {
@@ -62,12 +68,39 @@ public final class SmokeLauncher extends DesktopLauncher {
                         return type;
                     }
                 };
-                scenario = (LongConsumer)Class.forName("controlgroups.SmokeScenario", true, bridge).getConstructor(Fi.class).newInstance(reports);
+                scenario = (LongConsumer)Class.forName("controlgroups.SmokeScenario", true, bridge)
+                    .getConstructor(Fi.class, java.util.Map.class).newInstance(reports, sourceHulls);
             }
             scenario.accept(elapsed);
         } catch (Throwable exception) {
             reports.child("FAILED.txt").writeString(arc.util.Strings.getStackTrace(exception));
             exception.printStackTrace(); System.exit(2);
         }
+    }
+
+    /** Test-only independent oracle, captured while the repacker still owns its pixmaps. */
+    public static float[] visibleHull(TextureRegion region) {
+        float[] full = {0, 0, 0, 1, 1, 1, 1, 0};
+        try {
+            if (region.u > region.u2 || region.v > region.v2 || region.texture.getMinFilter().isMipMap()) return full;
+            var image = Core.atlas.getPixmap(region);
+            arc.struct.FloatSeq points = new arc.struct.FloatSeq();
+            java.util.HashSet<Long> seen = new java.util.HashSet<>();
+            for (int y = 0; y < image.height; y++) {
+                int first = image.width, last = -1;
+                for (int x = 0; x < image.width; x++) if ((image.get(x, y) & 255) != 0) {
+                    first = Math.min(first, x); last = Math.max(last, x);
+                }
+                if (last < first) continue;
+                int l = Math.max(0, 2 * first - 1), r = Math.min(2 * image.width, 2 * last + 3);
+                int b = Math.max(0, 2 * y - 1), t = Math.min(2 * image.height, 2 * y + 3);
+                for (int corner = 0; corner < 4; corner++) {
+                    int px = (corner & 1) == 0 ? l : r, py = (corner & 2) == 0 ? b : t;
+                    if (seen.add(((long)px << 32) | (py & 0xffffffffL)))
+                        points.add(px / (2f * image.width), 1 - py / (2f * image.height));
+                }
+            }
+            return points.size == 0 ? new float[0] : new arc.math.geom.ConvexHull().computePolygon(points, false).toArray();
+        } catch (RuntimeException unavailable) { return full; }
     }
 }

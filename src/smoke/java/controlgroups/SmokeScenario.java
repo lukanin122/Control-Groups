@@ -53,9 +53,11 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
     private final Seq<Unit> army = new Seq<>();
     private final long[] baseline = new long[240], enabled = new long[240];
     private int projectionCases;
+    private final java.util.Map<String, float[]> sourceHulls;
 
-    public SmokeScenario(Fi reports) {
+    public SmokeScenario(Fi reports, java.util.Map<String, float[]> sourceHulls) {
         this.reports = reports; reports.mkdirs();
+        this.sourceHulls = sourceHulls;
         reports.child("FAILED.txt").delete();
     }
 
@@ -109,6 +111,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                         (hud.layout.projectionSide == HudLayout.Side.TOP || hud.layout.projectionSide == HudLayout.Side.BOTTOM),
                         "Internal projections did not reserve longitudinal space");
                     require(Core.gl.glGetError() == 0, "OpenGL error after internal projection drawing");
+                    measureProjectionFill();
                     verifyProjectionFitting();
                     Core.graphics.setWindowSize(640, 480);
                     hud.toggleEditor(); stage++; frames = 0;
@@ -547,7 +550,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         var layout = new HudLayout(model);
         var renderer = new UnitProjection();
         IntSeq[] groups = new IntSeq[10];
-        ProjectionProbe probe = new ProjectionProbe();
+        ProjectionProbe probe = new ProjectionProbe(sourceHulls);
         Batch original = Core.batch;
         Draw.flush();
         try {
@@ -660,7 +663,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         settings.compression = 1; settings.manualLargest = true; settings.manualLargestSize = 1;
         layout.rebuild(settings, 1280, 900, 1, true);
         require(originalBounds.equals(layout.boxes[0].full), "Manual maximum changed HUD bounds");
-        ProjectionProbe probe = new ProjectionProbe(); Batch originalBatch = Core.batch; Draw.flush();
+        ProjectionProbe probe = new ProjectionProbe(sourceHulls); Batch originalBatch = Core.batch; Draw.flush();
         try {
             Core.batch = probe;
             for (boolean manual : new boolean[]{true, false}) {
@@ -715,26 +718,223 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
 
     private static final class ProjectionProbe extends SpriteBatch {
         private final float[] quad = new float[SPRITE_SIZE];
+        private final arc.struct.ObjectMap<TextureRegion, float[]> hulls = new arc.struct.ObjectMap<>();
+        private final java.util.Map<String, float[]> sourceHulls;
         private float left, bottom, right, top;
         private int vertices;
-        ProjectionProbe() { super(0); reset(); }
-        void reset() { left = bottom = Float.POSITIVE_INFINITY; right = top = Float.NEGATIVE_INFINITY; vertices = 0; }
+        private boolean measureRadius;
+        private double radius;
+        private float peakX, peakY;
+        private TextureRegion currentRegion, peakRegion;
+        ProjectionProbe(java.util.Map<String, float[]> sourceHulls) { super(0); this.sourceHulls = sourceHulls; reset(); }
+        void reset() { left = bottom = Float.POSITIVE_INFINITY; right = top = Float.NEGATIVE_INFINITY; vertices = 0; radius = 0; peakRegion = null; }
         @Override protected void draw(TextureRegion region, float x, float y, float ox, float oy, float w, float h, float rotation) {
+            currentRegion = region;
             constructVertices(quad, 0, region, x, y, ox, oy, w, h, rotation);
-            draw(region.texture, quad, 0, quad.length);
+            for (int i = 0; i < quad.length; i += VERTEX_SIZE)
+                require(Float.isFinite(quad[i]) && Float.isFinite(quad[i + 1]), "Non-finite raw sprite vertices");
+            float[] hull = hulls.get(region);
+            if (hull == null) { hull = visibleHull(region); hulls.put(region, hull); }
+            for (int i = 0; i < hull.length; i += 2) {
+                float u = hull[i], v = hull[i + 1];
+                accept(quad[0] + u * (quad[18] - quad[0]) + v * (quad[6] - quad[0]),
+                    quad[1] + u * (quad[19] - quad[1]) + v * (quad[7] - quad[1]));
+            }
+            currentRegion = null;
         }
         @Override protected void draw(Texture texture, float[] points, int offset, int count) {
             for (int i = offset; i < offset + count; i += VERTEX_SIZE) {
-                float x = points[i], y = points[i + 1];
-                require(Float.isFinite(x) && Float.isFinite(y), "Projection sent non-finite vertices to Arc");
-                left = Math.min(left, x); right = Math.max(right, x);
-                bottom = Math.min(bottom, y); top = Math.max(top, y); vertices++;
+                accept(points[i], points[i + 1]);
             }
+        }
+        private void accept(float x, float y) {
+            require(Float.isFinite(x) && Float.isFinite(y), "Projection sent non-finite vertices to Arc");
+            left = Math.min(left, x); right = Math.max(right, x);
+            bottom = Math.min(bottom, y); top = Math.max(top, y); vertices++;
+            if (measureRadius) {
+                double distance = Math.hypot(x, y);
+                if (distance > radius) { radius = distance; peakRegion = currentRegion; peakX = x; peakY = y; }
+            }
+        }
+        /** Independent test oracle: affine-transform the convex hull of nonzero texels, not the production radius formula. */
+        private float[] visibleHull(TextureRegion region) {
+            if (region instanceof arc.graphics.g2d.TextureAtlas.AtlasRegion named) {
+                float[] captured = sourceHulls.get(named.name);
+                if (captured != null) return captured;
+            }
+            return SmokeLauncher.visibleHull(region);
         }
         @Override protected void flush() { }
         boolean inside(Rect r) { return vertices == 0 || left >= r.x - .02f && bottom >= r.y - .02f &&
             right <= r.x + r.width + .02f && top <= r.y + r.height + .02f; }
         Rect bounds() { return new Rect(left, bottom, right - left, top - bottom); }
+    }
+
+    private void measureProjectionFill() {
+        reports.child("fill-envelope.csv").delete(); reports.child("fill-pixels.csv").delete();
+        StringBuilder report = new StringBuilder("type,advanced,prepared-radius,render-visible-radius,limiting-region\n");
+        StringBuilder pixels = new StringBuilder("type,advanced,pose,occupancy,body-angle,weapon-angle,warmup,recoil,gait,Z,tracking-span,P,width,height,min-clearance,outside-pixels\n");
+        StringBuilder timing = new StringBuilder("Real SDL/OpenGL renderer; 11 Conquer projections per batch, 1000 warmup batches, 500 measured batches.\nCPU draw+flush only, not complete GPU/frame time.\n");
+        UnitProjection renderer = new UnitProjection();
+        ProjectionProbe probe = new ProjectionProbe(sourceHulls); probe.measureRadius = true;
+        Batch originalBatch = Core.batch;
+        Mat originalProjection = new Mat(Draw.proj()), originalTransform = new Mat(Draw.trans());
+        float originalTime = arc.util.Time.time;
+        FrameBuffer buffer = new FrameBuffer(512, 512);
+        Draw.flush();
+        try {
+            // Engine pulse at its maximum, independent of the frame at which the scenario runs.
+            arc.util.Time.time = arc.math.Mathf.PI;
+            for (var type : Seq.with(UnitTypes.conquer, UnitTypes.oct, UnitTypes.dagger, UnitTypes.reign, UnitTypes.toxopid)) {
+                Unit unit = type.spawn(Team.sharded, 450, 450);
+                try {
+                    var settings = new ModSettings(new arc.Settings());
+                    settings.internalProjection = true; settings.length = 900; settings.breadth = 240;
+                    var model = new GroupModel(hud.profiles, Vars.content.units());
+                    IntSeq[] groups = new IntSeq[10]; for (int i = 0; i < 10; i++) groups[i] = new IntSeq();
+                    groups[0].add(unit.id);
+                    model.reconcile(groups, id -> mindustry.gen.Groups.unit.getByID(id), Seq.with(unit), Team.sharded, false);
+                    var layout = new HudLayout(model);
+                    for (boolean advanced : new boolean[]{false, true}) {
+                        settings.advanced = advanced; layout.rebuild(settings, 1280, 900, 1, true);
+                        ProjectionSample peak = new ProjectionSample();
+                        Core.batch = probe;
+                        for (int angle = 0; angle < 360; angle += 5) for (int warmup = 0; warmup <= 16; warmup++) for (int recoil = 0; recoil <= 2; recoil++) {
+                            projectionPose(unit, 90, angle, warmup / 16f, recoil / 2f); locomotionPose(unit, 0);
+                            probe.reset(); renderer.draw(unit, 0, 0, 0, type.hitSize, 0, type.hitSize, 10, advanced, 1);
+                            peak.capture(probe, angle, warmup / 16f, recoil / 2f, 0);
+                        }
+                        int gaitCount = unit instanceof mindustry.gen.Tankc ? type.treadFrames : 5;
+                        for (int gait = 0; gait < gaitCount; gait++) for (int angle = 0; angle < 360; angle += 5) {
+                            projectionPose(unit, 90, angle, 1, 1); locomotionPose(unit, gait);
+                            probe.reset(); renderer.draw(unit, 0, 0, 0, type.hitSize, 0, type.hitSize, 10, advanced, 1);
+                            peak.capture(probe, angle, 1, 1, gait);
+                        }
+                        var profile = hud.profiles.get(type);
+                        double prepared = advanced ? profile.advancedProjectionRadius : profile.projectionRadius;
+                        require(peak.radius <= prepared + .001, "Visible geometry exceeds prepared radius: " + type.name + " " + peak.radius + "/" + prepared);
+                        String peakName = peak.region instanceof arc.graphics.g2d.TextureAtlas.AtlasRegion named ? named.name :
+                            peak.region == null ? "stroke" : peak.region.width + "x" + peak.region.height;
+                        report.append(String.format(Locale.ROOT, "%s,%s,%.4f,%.4f,%s%n", type.name, advanced,
+                            prepared, peak.radius, peakName));
+                        Core.batch = originalBatch;
+                        for (float occupancy : new float[]{1, 1.05f, 1.5f}) {
+                            settings.occupancy = occupancy; layout.rebuild(settings, 1280, 900, 1, true);
+                            var box = layout.boxes[0]; float z = box.projectionFitSpan;
+                            for (int pose = 0; pose < 8; pose++) {
+                                float body = pose == 1 || pose == 3 ? 45 : 0, weapon = pose >= 2 ? 90 : 0;
+                                float warmup = pose >= 2 ? 1 : 0, recoil = warmup;
+                                int gait = 0;
+                                if (pose >= 4) {
+                                    // Align the measured extreme point with an edge; fitting stays constant during the pose changes.
+                                    body = 90 - (float)Math.toDegrees(Math.atan2(peak.y, peak.x));
+                                    weapon = peak.weapon; warmup = peak.warmup; recoil = peak.recoil; gait = peak.gait;
+                                }
+                                projectionPose(unit, body, weapon, warmup, recoil); locomotionPose(unit, gait);
+                                float drift = pose == 3 || pose == 5 || pose == 7 ? 1 : pose == 6 ? -1 : 0;
+                                unit.vel.set(drift, drift);
+                                if (pose == 7) { unit.shield = 100; unit.hitTime = 1; unit.apply(mindustry.content.StatusEffects.burning, 120); }
+                                buffer.begin(Color.clear); Draw.proj(0, 0, 512, 512); Draw.trans(new Mat());
+                                renderer.draw(unit, 0, 256, 256, layout.projectionPixels(box, type.hitSize, settings), z,
+                                    type.hitSize, 10, advanced, 1); Draw.flush();
+                                var image = ScreenUtils.getFrameBufferPixmap(0, 0, 512, 512);
+                                int left = 512, right = -1, bottom = 512, top = -1, outside = 0;
+                                try {
+                                    for (int y = 0; y < 512; y++) for (int x = 0; x < 512; x++) if ((image.get(x, y) & 255) != 0) {
+                                        left = Math.min(left, x); right = Math.max(right, x); bottom = Math.min(bottom, y); top = Math.max(top, y);
+                                        if (x < 256 - z / 2 || x + 1 > 256 + z / 2 || y < 256 - z / 2 || y + 1 > 256 + z / 2) outside++;
+                                    }
+                                    require(right >= left && left > 0 && right < 511 && bottom > 0 && top < 511, "Fill measurement clipped/empty");
+                                    float clearance = Math.min(Math.min(left, bottom) - (256 - z / 2), (256 + z / 2) - Math.max(right + 1, top + 1));
+                                    require(occupancy > 1 || outside == 0, "100% raster overflow: " + type.name + " pose=" + pose + " clearance=" + clearance);
+                                    if (type == UnitTypes.conquer && pose == 5) {
+                                        require(occupancy != 1 || clearance <= 3, "Conquer fitting leaves excessive unused space at its measured extreme");
+                                        require(occupancy != 1.05f || outside > 0, "The measured rotation/motion limit was not exercised");
+                                    }
+                                    if (occupancy == 1 && pose == 5) PixmapIO.writePng(reports.child("fill-extreme-" + type.name + "-" + advanced + ".png"), image);
+                                    pixels.append(String.format(Locale.ROOT, "%s,%s,%d,%.2f,%.2f,%.2f,%.4f,%.2f,%d,%.2f,%.2f,%.2f,%d,%d,%.2f,%d%n",
+                                        type.name, advanced, pose, occupancy, body, weapon, warmup, recoil, gait, z,
+                                        Math.min(box.projectionFull.width, box.projectionFull.height), layout.projectionPixels(box, type.hitSize, settings),
+                                        right - left + 1, top - bottom + 1, clearance, outside));
+                                } finally { image.dispose(); buffer.end(); }
+                            }
+                        }
+                        if (type == UnitTypes.conquer) {
+                            settings.occupancy = 1; layout.rebuild(settings, 1280, 900, 1, true);
+                            timing.append(measureProjectionBatch(unit, renderer, layout.projectionPixels(layout.boxes[0], type.hitSize, settings),
+                                layout.boxes[0].projectionFitSpan, advanced));
+                        }
+                    }
+                } finally { unit.remove(); }
+            }
+        } finally {
+            Core.batch = originalBatch; Draw.flush(); Draw.proj(originalProjection); Draw.trans(originalTransform);
+            arc.util.Time.time = originalTime;
+            buffer.dispose(); probe.dispose();
+        }
+        reports.child("fill-envelope.csv").writeString(report.toString());
+        reports.child("fill-pixels.csv").writeString(pixels.toString());
+        reports.child("projection-render-benchmark.txt").writeString(timing.toString());
+        System.out.println(report);
+    }
+
+    private String measureProjectionBatch(Unit unit, UnitProjection renderer, float pixels, float zone, boolean advanced) {
+        FrameBuffer buffer = new FrameBuffer(1280, 512);
+        Mat projection = new Mat(Draw.proj()), transform = new Mat(Draw.trans());
+        long[] elapsed = new long[500];
+        projectionPose(unit, 45, 90, 1, 1);
+        try {
+            buffer.begin(Color.clear); Draw.proj(0, 0, 1280, 512); Draw.trans(new Mat());
+            for (int frame = -1000; frame < elapsed.length; frame++) {
+                long start = System.nanoTime();
+                for (int group = 0; group < 11; group++)
+                    renderer.draw(unit, group, 70 + 112 * group, 256, pixels, zone, unit.type.hitSize, 0, advanced, 1);
+                Draw.flush();
+                if (frame >= 0) elapsed[frame] = System.nanoTime() - start;
+            }
+        } finally { Draw.flush(); buffer.end(); Draw.proj(projection); Draw.trans(transform); buffer.dispose(); }
+        Arrays.sort(elapsed);
+        return String.format(Locale.ROOT, "advanced=%s median/p95 %.1f/%.1f us per 11 projections%n",
+            advanced, elapsed[250] / 1000d, elapsed[475] / 1000d);
+    }
+
+    private static final class ProjectionSample {
+        double radius;
+        TextureRegion region;
+        float x, y, weapon, warmup, recoil;
+        int gait;
+        void capture(ProjectionProbe probe, float weapon, float warmup, float recoil, int gait) {
+            if (probe.radius <= radius) return;
+            radius = probe.radius; region = probe.peakRegion; x = probe.peakX; y = probe.peakY;
+            this.weapon = weapon; this.warmup = warmup; this.recoil = recoil; this.gait = gait;
+        }
+    }
+
+    private static void locomotionPose(Unit unit, int pose) {
+        if (unit instanceof mindustry.gen.Tankc tank) tank.treadTime(pose);
+        if (unit instanceof mindustry.gen.Mechc mech) {
+            mech.baseRotation(unit.rotation); mech.walkTime(unit.type.mechStride * (pose % 4));
+            unit.elevation = pose == 4 ? 1 : 0;
+        }
+        if (unit instanceof mindustry.gen.Legsc legs) {
+            legs.baseRotation(unit.rotation);
+            legs.resetLegs(unit.type.legLength * (pose == 0 ? 1 : pose == 1 ? unit.type.legMinLength : unit.type.legMaxLength));
+            if (pose >= 3) for (int i = 0; i < legs.legs().length; i++) {
+                Vec2 hip = legs.legOffset(new Vec2(), i).add(unit);
+                legs.legs()[i].joint.sub(hip).rotate(pose == 3 ? 90 : -90).add(hip);
+            }
+        }
+    }
+
+    private static void projectionPose(Unit unit, float body, float weapon, float warmup, float recoil) {
+        unit.rotation = body; unit.elevation = 1; unit.vel.setZero(); unit.shield = 0; unit.hitTime = 0;
+        unit.unapply(mindustry.content.StatusEffects.burning);
+        for (var mount : unit.mounts) {
+            mount.rotation = weapon; mount.warmup = mount.heat = mount.charge = warmup;
+            mount.recoil = recoil; mount.reload = mount.weapon.reload * recoil;
+            mount.smoothReload = recoil;
+            if (mount.recoils != null) java.util.Arrays.fill(mount.recoils, recoil);
+        }
     }
 
     private void verifyBuildingSelection(Rect group) {

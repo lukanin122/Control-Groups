@@ -276,7 +276,7 @@ public final class HudLayout {
             double radius = s.advanced ? profile.advancedProjectionRadius : profile.projectionRadius;
             // The normalized fallback and status strokes also cover types with invalid hitSize.
             double statusRadius = s.advanced && profile.unit.drawShields ? UnitProjection.SHIELD_RADIUS : UnitProjection.BURNING_RADIUS;
-            double relativeRadius = Math.max(Math.sqrt(.5), Math.max(radius / hit, statusRadius + UnitProjection.STATUS_STROKE_RADIUS / hit));
+            double relativeRadius = Math.max(profile.fallbackRadiusRatio, Math.max(radius / hit, statusRadius + UnitProjection.STATUS_STROKE_RADIUS / hit));
             box.projectionExtent = Math.max(box.projectionExtent, relativeRadius * compressed(profile.unit.hitSize, s));
             cell.iconSize = iconPixels(cell.bucket.profile.unit.hitSize, s) * scale;
             cell.fontScale = 0.65f * cell.iconSize / 24f;

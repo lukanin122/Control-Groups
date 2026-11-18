@@ -3,6 +3,7 @@ package controlgroups;
 import arc.Events;
 import mindustry.Vars;
 import mindustry.game.EventType.ClientLoadEvent;
+import mindustry.game.EventType.AtlasPackEvent;
 import mindustry.game.EventType.DisposeEvent;
 import mindustry.game.EventType.ResetEvent;
 import mindustry.game.EventType.UnitDamageEvent;
@@ -14,6 +15,7 @@ public class ControlGroupsMod extends Mod {
     private GroupsHud hud;
 
     public ControlGroupsMod() {
+        Events.on(AtlasPackEvent.class, event -> { if (!Vars.headless) ProjectionBounds.captureAtlas(); });
         Events.on(ClientLoadEvent.class, event -> {
             if (Vars.headless || hud != null) return;
             hud = new GroupsHud(); hud.attach();

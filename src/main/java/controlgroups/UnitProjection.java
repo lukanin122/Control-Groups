@@ -232,8 +232,8 @@ public final class UnitProjection {
 
     /** RegionPart data adapter: no polymorphic draw(), world light, abilities or custom child draw calls. */
     private void part(DrawPart raw, int depth) {
-        if (raw == null || raw.getClass() != RegionPart.class || depth >= partParams.length - 1) return;
-        RegionPart part = (RegionPart)raw;
+        // Vanilla Java content uses anonymous subclasses for data initializers; no subclass draw() is invoked here.
+        if (!(raw instanceof RegionPart part) || depth >= partParams.length - 1) return;
         PartParams params = partParams[depth];
         float progress = part.progress.getClamp(params, part.clampProgress);
         float grow = part.growProgress.getClamp(params, part.clampProgress);
@@ -311,6 +311,9 @@ public final class UnitProjection {
         float ax = px(x1), ay = py(y1), bx = px(x2), by = py(y2);
         float stroke = Math.max(.1f, Math.abs(region.height * region.scale / 4f * scale));
         if (!safeQuad(ax, ay, stroke, stroke) || !safeQuad(bx, by, stroke, stroke)) return;
+        // Arc divides by the segment length; a fully folded leg can have coincident endpoints.
+        float length = Mathf.len(bx - ax, by - ay);
+        if (!Float.isFinite(length) || length <= 0) return;
         Lines.stroke(stroke);
         Lines.line(region, ax, ay, bx, by, false);
     }
