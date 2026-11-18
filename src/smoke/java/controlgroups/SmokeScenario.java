@@ -113,6 +113,8 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                     require(Core.gl.glGetError() == 0, "OpenGL error after internal projection drawing");
                     measureProjectionFill();
                     verifyProjectionFitting();
+                    verifyRealCellPacking();
+                    SmokeProjectionComparison.run(reports);
                     Core.graphics.setWindowSize(640, 480);
                     hud.toggleEditor(); stage++; frames = 0;
                 }
@@ -217,10 +219,14 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         click(cell.rect.x + cell.rect.width / 2, cell.rect.y + cell.rect.height / 2);
         require(Vars.control.input.selectedUnits.size == 1 && Vars.control.input.selectedUnits.first().type == cell.bucket.profile.unit,
             "Type click selected the wrong members");
+        click(cell.rect.x + cell.rect.width / 2, cell.rect.y + cell.rect.height / 2);
+        require(Core.camera.position.epsilonEquals(Vars.control.input.selectedUnits.first().x, Vars.control.input.selectedUnits.first().y, .01f),
+            "Type double click no longer focuses its selected unit");
         Rect projection = hud.layout.boxes[0].projection;
         click(projection.x + projection.width / 2, projection.y + projection.height / 2);
         require(Vars.control.input.selectedUnits.size == 1 &&
             Vars.control.input.selectedUnits.first() == hud.model.groups[0].representative.unit, "Projection click selected wrong unit");
+        verifyControlledProjectionCamera();
         require(hud.hit(-10, -10, true) == null, "HUD intercepted input outside its controls");
         for (var box : hud.layout.boxes) if (box.visible) for (int i = 0; i < box.cellCount; i++) {
             var c = box.cells[i]; var ui = c.bucket.profile.uiIcon;
@@ -237,6 +243,42 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         require(Lines.getStroke() == stroke && Draw.xscl == xs && Draw.yscl == ys && Draw.z() == z &&
             Draw.getBlend() == blend && Draw.getShader() == shader && Arrays.equals(transform, Draw.trans().val) &&
             Arrays.equals(projectionMatrix, Draw.proj().val), "HUD leaked renderer state");
+    }
+
+    private void verifyControlledProjectionCamera() {
+        Unit target = hud.model.groups[0].representative.unit, previous = Vars.player.unit();
+        var controller = target.controller();
+        Unit selected = army.find(unit -> unit != target && unit.isCommandable());
+        Rect area = hud.layout.boxes[0].projection;
+        // Change the preceding click key, then take genuine player control without selecting the target.
+        click(hud.layout.boxes[0].shown.x + 1, hud.layout.boxes[0].shown.y + 1);
+        try {
+            Vars.player.unit(target);
+            require(!target.isCommandable(), "The player-controlled fixture remained commandable");
+            Vars.control.input.selectedUnits.set(Seq.with(selected));
+            boolean command = Vars.control.input.commandMode;
+            Core.camera.position.set(850, 850);
+            hud.model.telemetry = true;
+            long reconciliations = hud.model.reconciliations;
+            click(area.x + area.width / 2, area.y + area.height / 2);
+            require(Core.camera.position.epsilonEquals(850, 850, .01f), "Single projection click unexpectedly moved the camera");
+            click(area.x + area.width / 2, area.y + area.height / 2);
+            require(Core.camera.position.epsilonEquals(target.x, target.y, .01f), "Double click cannot focus the player-controlled projection");
+            require(Vars.control.input.commandMode == command && Vars.control.input.selectedUnits.size == 1 &&
+                Vars.control.input.selectedUnits.first() == selected, "Focusing an unselectable projection changed native selection");
+            require(hud.model.reconciliations == reconciliations, "Projection click unnecessarily reconciled every group");
+            Core.camera.position.set(850, 850);
+            for (boolean changeTeam : new boolean[]{false, true}) {
+                fire(hud, InputEvent.InputEventType.touchDown, hud.x + area.x + area.width / 2, hud.y + area.y + area.height / 2);
+                if (changeTeam) target.team = Team.crux; else target.dead = true;
+                try { fire(hud, InputEvent.InputEventType.touchUp, hud.x + area.x + area.width / 2, hud.y + area.y + area.height / 2); }
+                finally { target.team = Team.sharded; target.dead = false; }
+                require(Core.camera.position.epsilonEquals(850, 850, .01f), "An invalid projection still moved the camera");
+            }
+        } finally {
+            hud.model.telemetry = false;
+            Vars.player.unit(previous); target.controller(controller);
+        }
     }
 
     private void verifySmallEditor() {
@@ -768,6 +810,59 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         boolean inside(Rect r) { return vertices == 0 || left >= r.x - .02f && bottom >= r.y - .02f &&
             right <= r.x + r.width + .02f && top <= r.y + r.height + .02f; }
         Rect bounds() { return new Rect(left, bottom, right - left, top - bottom); }
+    }
+
+    private void verifyRealCellPacking() {
+        var types = Seq.with(UnitTypes.stell, UnitTypes.locus, UnitTypes.cleroi, UnitTypes.vanquish, UnitTypes.conquer);
+        int[] counts = {1, 8, 1, 1, 10}; Seq<Unit> samples = new Seq<>();
+        for (int i = 0; i < counts.length; i++) for (int j = 0; j < counts[i]; j++) samples.add(types.get(i).spawn(Team.sharded, 650, 650));
+        var model = new GroupModel(hud.profiles, Vars.content.units());
+        IntSeq[] empty = new IntSeq[10]; for (int i = 0; i < empty.length; i++) empty[i] = new IntSeq();
+        model.reconcile(empty, id -> mindustry.gen.Groups.unit.getByID(id), samples, Team.sharded, true);
+        ProjectionProbe probe = new ProjectionProbe(sourceHulls); Batch original = Core.batch;
+        Mat projection = new Mat(Draw.proj()), transform = new Mat(Draw.trans());
+        FrameBuffer buffer = new FrameBuffer(768, 384);
+        int cases = 0;
+        try {
+            var measure = GroupsHud.class.getDeclaredMethod("measureCounter", String.class, float.class, HudLayout.Cell.class); measure.setAccessible(true);
+            var draw = GroupsHud.class.getDeclaredMethod("drawCell", HudLayout.Cell.class, float.class); draw.setAccessible(true);
+            var layout = new HudLayout(model, (text, size, cell) -> {
+                try { measure.invoke(hud, text, size, cell); } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+            });
+            var settings = new ModSettings(new arc.Settings()); settings.unassigned = true; settings.length = 900;
+            for (int direction = 0; direction < 4; direction++) for (int size = 0; size < 2; size++)
+                for (var mode : ModSettings.SpaceMode.values()) for (var free : ModSettings.FreeSpaceMode.values())
+                    for (float scale : new float[]{.75f, 1, 2}) {
+                        settings.vertical = direction < 2; settings.reverse = direction % 2 == 1;
+                        settings.breadth = size == 0 ? 280 : 520; settings.spaceMode = mode; settings.freeSpaceMode = free;
+                        layout.rebuild(settings, 1920, 1080, scale, true);
+                        var box = layout.boxes[10];
+                        Core.batch = probe;
+                        for (int i = 0; i < box.cellCount; i++) {
+                            var cell = box.cells[i]; probe.reset(); draw.invoke(hud, cell, 1f);
+                            Rect expected = new Rect(cell.rect); expected.x += hud.x; expected.y += hud.y;
+                            require(probe.inside(expected), "Real icon/counter exceeds its compound block: " + cell.bucket.profile.unit.name +
+                                " expected=" + expected + " drawn=" + probe.bounds());
+                            cases++;
+                        }
+                        Core.batch = original;
+                        if (direction == 0 && mode == ModSettings.SpaceMode.PROPORTIONAL && free == ModSettings.FreeSpaceMode.LIMITED && scale == 1) {
+                            buffer.begin(Color.clear);
+                            try {
+                                Draw.proj(0, 0, 768, 384); Draw.trans(new Mat()); Draw.color();
+                                mindustry.gen.Tex.pane.draw(20, 20, box.full.width, box.full.height);
+                                Draw.trans(new Mat().setToTranslation(20 - hud.x - box.full.x, 20 - hud.y - box.full.y));
+                                for (int i = box.cellCount - 1; i >= 0; i--) draw.invoke(hud, box.cells[i], 1f);
+                                Draw.flush();
+                                var pixels = ScreenUtils.getFrameBufferPixmap(0, 0, 768, 384);
+                                try { PixmapIO.writePng(reports.child("cell-packing-" + (size == 0 ? "crowded" : "roomy") + ".png"), pixels); }
+                                finally { pixels.dispose(); }
+                            } finally { buffer.end(); Draw.proj(projection); Draw.trans(transform); }
+                        }
+                    }
+            reports.child("cell-packing.txt").writeString(cases + " actual sprite/font compound bounds PASS; user's 1/8/1/1/10 composition.\n");
+        } catch (ReflectiveOperationException error) { throw new AssertionError(error); }
+        finally { Core.batch = original; Draw.proj(projection); Draw.trans(transform); buffer.dispose(); probe.dispose(); for (Unit unit : samples) unit.remove(); }
     }
 
     private void measureProjectionFill() {

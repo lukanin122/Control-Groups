@@ -61,7 +61,8 @@ public final class GroupsHud extends Element {
     private float damageDuration = 120;
     private float sceneWidth = -1, sceneHeight = -1, uiScale = -1;
     private float delta = 1f / 60f, pressX, pressY, startX, startY, startWidth, startHeight;
-    private int resizeEdges, pressedGroup = -1, pressedType = -1, pressedUnit = -1;
+    private int resizeEdges, pressedGroup = -1, pressedType = -1;
+    private Unit pressedUnit;
     private boolean dragging, moveDrag, pressedZero;
     private long lastClickKey = Long.MIN_VALUE;
     public long drawNanos;
@@ -116,13 +117,13 @@ public final class GroupsHud extends Element {
                 if (pointer != 0 || button != KeyCode.mouseLeft) return;
                 if (pressedZero || pressedGroup >= 0 || dragging) event.stop();
                 if (dragging) { finishDrag(); return; }
-                if (event.isTouchFocusCancel()) { pressedZero = false; pressedGroup = -1; return; }
+                if (event.isTouchFocusCancel()) { pressedZero = false; pressedGroup = -1; pressedUnit = null; return; }
                 float dx = x + GroupsHud.this.x - pressX, dy = y + GroupsHud.this.y - pressY;
                 if (dx * dx + dy * dy <= 64 * layout.scale * layout.scale && interactive()) {
                     if (pressedZero && layout.zero.contains(x, y)) toggleEditor();
                     else if (!editing && pressedGroup >= 0 && layout.boxes[pressedGroup].shown.contains(x, y)) clickSelection();
                 }
-                pressedGroup = -1; pressedZero = false;
+                pressedGroup = -1; pressedZero = false; pressedUnit = null;
             }
         });
     }
@@ -150,7 +151,7 @@ public final class GroupsHud extends Element {
         if (!active) {
             editorPanel.visible = unitPanel.visible = false;
             if (wasActive) {
-                dragging = false; pressedGroup = -1; lastClickKey = Long.MIN_VALUE;
+                dragging = false; pressedGroup = -1; pressedUnit = null; lastClickKey = Long.MIN_VALUE;
                 Core.scene.unfocus(editorPanel); Core.scene.unfocus(unitPanel);
             }
             wasActive = false;
@@ -309,12 +310,19 @@ public final class GroupsHud extends Element {
 
     private void drawCell(HudLayout.Cell cell, float alpha) {
         var region = cell.region;
-        if (region == null || region.texture == null || region.width <= 0 || region.height <= 0) return;
+        if (region == null || region.texture == null || region.width <= 0 || region.height <= 0 || cell.rect.width <= 0 || cell.rect.height <= 0) return;
         float cy = y + cell.rect.y + cell.rect.height / 2;
         Draw.color(Color.white, alpha);
         Draw.rect(region, x + cell.icon.x + cell.icon.width / 2, y + cell.icon.y + cell.icon.height / 2, cell.icon.width, cell.icon.height);
-        if (cell.showCount) text(cell.bucket.countText, x + cell.counterRight, cy, cell.bucket.profile.color,
-            cell.fontScale, Align.right, alpha);
+        if (cell.showCount) {
+            Font font = Fonts.outline; boolean integer = font.usesIntegerPositions();
+            try {
+                // Keep the complete compound block scalable; per-glyph rounding would escape a subpixel-sized cell.
+                font.setUseIntegerPositions(false);
+                text(cell.bucket.countText, x + cell.counterRight, cy - cell.countOffsetY, cell.bucket.profile.color,
+                    cell.fontScale, Align.right, alpha);
+            } finally { font.setUseIntegerPositions(integer); }
+        }
     }
 
     private void panel(Rect rect, Color border, float alpha) {
@@ -357,9 +365,28 @@ public final class GroupsHud extends Element {
         }
     }
 
-    private float measureCounter(String value, float fontScale) {
+    private void measureCounter(String value, float fontScale, HudLayout.Cell cell) {
         Font font = Fonts.outline; float sx = font.getData().scaleX, sy = font.getData().scaleY;
-        try { font.getData().setScale(fontScale); counterMetrics.setText(font, value); return counterMetrics.width; }
+        try {
+            font.getData().setScale(fontScale); counterMetrics.setText(font, value);
+            float left = Float.POSITIVE_INFINITY, bottom = Float.POSITIVE_INFINITY;
+            float right = Float.NEGATIVE_INFINITY, top = Float.NEGATIVE_INFINITY;
+            // GlyphLayout excludes font padding. Measure the same textured quads FontCache actually draws.
+            for (int i = 0; i < counterMetrics.runs.size; i++) {
+                var run = counterMetrics.runs.get(i); float gx = run.x;
+                for (int j = 0; j < run.glyphs.size; j++) {
+                    var glyph = run.glyphs.get(j); gx += run.xAdvances.get(j);
+                    float px = gx + glyph.xoffset * fontScale, py = run.y + glyph.yoffset * fontScale;
+                    left = Math.min(left, px); bottom = Math.min(bottom, py);
+                    right = Math.max(right, px + glyph.width * fontScale); top = Math.max(top, py + glyph.height * fontScale);
+                }
+            }
+            if (right >= left) {
+                cell.countWidth = right - left; cell.countHeight = top - bottom;
+                cell.countRightInset = right - counterMetrics.width;
+                cell.countOffsetY = (top + bottom) / 2 + font.getData().ascent + font.getCapHeight() / 2;
+            }
+        }
         finally { font.getData().setScale(sx, sy); }
     }
 
@@ -384,13 +411,13 @@ public final class GroupsHud extends Element {
     }
 
     private void findTarget(float x, float y) {
-        pressedGroup = -1; pressedType = pressedUnit = -1;
+        pressedGroup = -1; pressedType = -1; pressedUnit = null;
         for (int i = 0; i < layout.orderCount; i++) {
             HudLayout.Box box = layout.boxes[layout.order[i]];
             if (!box.visible || !box.shown.contains(x, y)) continue;
             pressedGroup = box.group.index;
             if (settings.projection && box.projection.contains(x, y) && box.group.representative != null) {
-                pressedUnit = box.group.representative.unit.id;
+                pressedUnit = box.group.representative.unit;
             } else if (box.expansion > 0.85f && box.content.contains(x, y)) {
                 // Match the draw order in regions where cells overlap.
                 int start = 0;
@@ -408,29 +435,39 @@ public final class GroupsHud extends Element {
     }
 
     private void clickSelection() {
-        // Reconcile on an explicit action: group edits/deaths between scheduled updates cannot select stale members.
-        model.reconcile(handler.controlGroups, resolve, team.data().units, team, settings.unassigned);
         selection.clear();
-        var group = model.groups[pressedGroup];
-        for (int i = 0; i < group.members.size; i++) {
-            Unit unit = group.members.get(i).unit;
-            if (!GroupModel.available(unit, team) || !profiles.allowed(unit.type) || !unit.type.playerControllable || !unit.isCommandable() || !unit.allowCommand()) continue;
-            if (pressedType >= 0 && unit.type.id != pressedType) continue;
-            if (pressedUnit >= 0 && unit.id != pressedUnit) continue;
-            selection.add(unit);
+        if (pressedUnit != null) {
+            // A projection targets the pressed object directly; no reconciliation of all groups is needed.
+            if (!GroupModel.available(pressedUnit, team) || !profiles.allowed(pressedUnit.type) || resolve.apply(pressedUnit.id) != pressedUnit) return;
+            if (pressedUnit.type.playerControllable && pressedUnit.isCommandable() && pressedUnit.allowCommand()) selection.add(pressedUnit);
+        } else {
+            // Group/type actions still reconcile edits and deaths between scheduled updates.
+            model.reconcile(handler.controlGroups, resolve, team.data().units, team, settings.unassigned);
+            var group = model.groups[pressedGroup];
+            for (int i = 0; i < group.members.size; i++) {
+                Unit unit = group.members.get(i).unit;
+                if (!GroupModel.available(unit, team) || !profiles.allowed(unit.type) || !unit.type.playerControllable || !unit.isCommandable() || !unit.allowCommand()) continue;
+                if (pressedType >= 0 && unit.type.id != pressedType) continue;
+                selection.add(unit);
+            }
         }
-        if (selection.isEmpty()) return;
-        // Cancel only the active placement preview, not the player's queued construction work.
-        handler.block = null; handler.linePlans.clear(); handler.selectPlans.clear();
-        handler.commandMode = true; handler.commandRect = false;
-        handler.selectedUnits.set(selection);
-        handler.commandBuildings.clear();
-        long key = pressedUnit >= 0 ? (1L << 62) | ((long)pressedUnit << 4) | pressedGroup :
+        if (selection.isEmpty() && pressedUnit == null) return;
+        if (!selection.isEmpty()) {
+            // Cancel only the active placement preview, not the player's queued construction work.
+            handler.block = null; handler.linePlans.clear(); handler.selectPlans.clear();
+            handler.commandMode = true; handler.commandRect = false;
+            handler.selectedUnits.set(selection);
+            handler.commandBuildings.clear();
+        }
+        long key = pressedUnit != null ? (1L << 62) | ((long)pressedUnit.id << 4) | pressedGroup :
             pressedType >= 0 ? (1L << 61) | ((long)pressedType << 4) | pressedGroup : pressedGroup;
         if (key == lastClickKey && now - lastClickAt <= UpdatePolicy.DOUBLE_CLICK_SECONDS) {
-            camera.setZero();
-            for (int i = 0; i < selection.size; i++) camera.add(selection.get(i));
-            camera.scl(1f / selection.size);
+            if (pressedUnit != null) camera.set(pressedUnit);
+            else {
+                camera.setZero();
+                for (int i = 0; i < selection.size; i++) camera.add(selection.get(i));
+                camera.scl(1f / selection.size);
+            }
             handler.panCamera(camera);
             lastClickKey = Long.MIN_VALUE;
         } else lastClickKey = key;
@@ -531,7 +568,7 @@ public final class GroupsHud extends Element {
         setTelemetry(false);
         model.clear(); projection.clear(); selection.clear();
         dragging = moveDrag = wasActive = false;
-        pressedGroup = -1; lastClickKey = Long.MIN_VALUE;
+        pressedGroup = -1; pressedUnit = null; lastClickKey = Long.MIN_VALUE;
         membershipAt = stateAt = 0; dirty = true;
         unitPanel.open = false;
         editing = false; editorPanel.visible = unitPanel.visible = false;

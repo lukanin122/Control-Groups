@@ -11,16 +11,19 @@ public final class HudLayout {
     public static final float BORDER = 4f;
     private static final float RASTER_MARGIN = 1f;
     public enum Side { LEFT, RIGHT, BOTTOM, TOP }
-    @FunctionalInterface public interface CounterMeasure { float width(String text, float fontScale); }
+    @FunctionalInterface public interface CounterMeasure { void measure(String text, float fontScale, Cell cell); }
 
     public static final class Cell {
         public final Rect rect = new Rect();
         public final Rect icon = new Rect();
         public Bucket bucket;
-        public float iconSize, fontScale, countWidth, naturalWidth, naturalHeight;
+        public float iconSize, fontScale, countWidth, countHeight, countRightInset, countOffsetY, naturalWidth, naturalHeight;
         public boolean showCount;
         public TextureRegion region;
         public float counterRight;
+        // Tier metrics live on its first cell, and are reused by both placement axes.
+        private int tierEnd;
+        private float tierPrimary, tierCross;
     }
 
     public static final class Box {
@@ -36,6 +39,7 @@ public final class HudLayout {
         public double projectionScale, projectionSafety;
         public boolean visible;
         private double projectionExtent;
+        private int lastTier;
         private Box(Group group) { this.group = group; }
     }
 
@@ -55,8 +59,11 @@ public final class HudLayout {
     public boolean telemetry;
     private boolean vertical, reverse, crossLow, alongLow;
     private float pad, typeGap, tierGap, currentCounterGap;
+    private float axisCompression, axisCenter;
 
-    public HudLayout(GroupModel model) { this(model, (text, size) -> text.length() * 12f * size); }
+    public HudLayout(GroupModel model) {
+        this(model, (text, size, cell) -> { cell.countWidth = text.length() * 12f * size; cell.countHeight = 24f * size; });
+    }
 
     public HudLayout(GroupModel model, CounterMeasure measure) {
         this.measure = measure;
@@ -281,9 +288,12 @@ public final class HudLayout {
             cell.iconSize = iconPixels(cell.bucket.profile.unit.hitSize, s) * scale;
             cell.fontScale = 0.65f * cell.iconSize / 24f;
             cell.showCount = !(s.hideSingles && cell.bucket.count == 1);
-            cell.countWidth = cell.showCount ? measure.width(cell.bucket.countText, cell.fontScale) : 0;
-            cell.naturalWidth = cell.iconSize + (cell.showCount ? cell.countWidth + s.counterGap * scale : 0);
-            cell.naturalHeight = cell.iconSize + 4 * scale;
+            cell.countWidth = cell.countHeight = cell.countRightInset = cell.countOffsetY = 0;
+            if (cell.showCount) measure.measure(cell.bucket.countText, cell.fontScale, cell);
+            cell.region = unitIcon(profile.uiIcon, profile.fullIcon, cell.iconSize * pixelRatio, s.fullIcons);
+            sizeIcon(cell, cell.iconSize);
+            cell.naturalWidth = cell.icon.width + (cell.showCount ? cell.countWidth + currentCounterGap : 0);
+            cell.naturalHeight = Math.max(cell.icon.height, cell.countHeight) + 4 * scale;
             if (cell.bucket.profile.tier != tier) {
                 p = Math.max(p, Math.max(0, rowP - typeGap));
                 q += rowQ + (tier == -1 ? 0 : tierGap);
@@ -358,51 +368,108 @@ public final class HudLayout {
     private void prepareCells(Box box, ModSettings settings) {
         Rect area = box.contentFull;
         float pSpace = vertical ? area.height : area.width, qSpace = vertical ? area.width : area.height;
-        int rows = 0;
+        for (int i = 0; i < box.cellCount; i++) {
+            Cell cell = box.cells[i];
+            float fit = Math.min(1, Math.min(area.width / cell.naturalWidth, area.height / cell.naturalHeight));
+            float w = cell.naturalWidth, h = cell.naturalHeight;
+            if (fit < 1) {
+                TextureRegion region = unitIcon(cell.bucket.profile.uiIcon, cell.bucket.profile.fullIcon,
+                    cell.iconSize * fit * pixelRatio, settings.fullIcons);
+                if (region != cell.region) {
+                    // Only a fullIcon -> uiIcon switch can change the prepared aspect ratio during clipping.
+                    cell.region = region; sizeIcon(cell, cell.iconSize);
+                    w = cell.icon.width + (cell.showCount ? cell.countWidth + currentCounterGap : 0);
+                    h = Math.max(cell.icon.height, cell.countHeight) + 4 * scale;
+                    fit = Math.min(fit, Math.min(area.width / w, area.height / h));
+                }
+            }
+            cell.rect.setSize(w * fit, h * fit);
+            cell.icon.setSize(cell.icon.width * fit, cell.icon.height * fit);
+            cell.fontScale *= fit; cell.countWidth *= fit; cell.countHeight *= fit;
+            cell.countRightInset *= fit; cell.countOffsetY *= fit;
+        }
         float totalQ = 0;
         for (int start = 0; start < box.cellCount;) {
-            int end = tierEnd(box, start); float q = 0;
-            for (int i = start; i < end; i++) q = Math.max(q, cellQ(box.cells[i]));
-            totalQ += Math.min(q, qSpace) + (rows == 0 ? 0 : tierGap); rows++; start = end;
-        }
-        float rowCursor = 0; int row = 0;
-        for (int start = 0; start < box.cellCount; row++) {
-            int end = tierEnd(box, start); float totalP = 0, rowQ = 0;
+            Cell first = box.cells[start];
+            box.lastTier = start;
+            int end = start + 1;
+            while (end < box.cellCount && box.cells[end].bucket.profile.tier == first.bucket.profile.tier) end++;
+            first.tierEnd = end; first.tierPrimary = first.tierCross = 0;
             for (int i = start; i < end; i++) {
-                totalP += Math.min(cellP(box.cells[i]), pSpace) + (i == start ? 0 : typeGap);
-                rowQ = Math.max(rowQ, cellQ(box.cells[i]));
+                first.tierPrimary += placedP(box.cells[i]) + (i == start ? 0 : typeGap);
+                first.tierCross = Math.max(first.tierCross, placedQ(box.cells[i]));
             }
-            rowQ = Math.min(rowQ, qSpace);
-            float cursor = Math.max(0, (pSpace - totalP) / 2);
-            float rowPosition = totalQ > qSpace && rows > 1 ? (qSpace - rowQ) * row / (rows - 1) : rowCursor;
+            totalQ += first.tierCross + (start == 0 ? 0 : tierGap); start = end;
+        }
+        float crossCompression = 1, crossCenter = qSpace / 2;
+        if (totalQ > qSpace) {
+            fitAxis(box, 0, box.cellCount, totalQ, qSpace, true);
+            crossCompression = axisCompression; crossCenter = axisCenter;
+        }
+        float rowCursor = 0;
+        for (int start = 0; start < box.cellCount;) {
+            Cell first = box.cells[start];
+            int end = first.tierEnd;
+            float totalP = first.tierPrimary, rowQ = first.tierCross;
+            float alongCompression = 1, alongCenter = pSpace / 2;
+            if (totalP > pSpace) {
+                fitAxis(box, start, end, totalP, pSpace, false);
+                alongCompression = axisCompression; alongCenter = axisCenter;
+            }
+            float rowPosition = totalQ > qSpace ? crossCenter + crossCompression * (rowCursor + rowQ / 2 - totalQ / 2) - rowQ / 2 : rowCursor;
+            float cursor = 0;
             for (int i = start; i < end; i++) {
-                Cell cell = box.cells[i]; float pSize = Math.min(pSpace, cellP(cell)), qSize = Math.min(rowQ, cellQ(cell));
-                float p = totalP > pSpace && end - start > 1 ? (pSpace - pSize) * (i - start) / (end - start - 1) : cursor;
+                Cell cell = box.cells[i]; float pSize = placedP(cell), qSize = placedQ(cell);
+                float p = alongCenter + alongCompression * (cursor + pSize / 2 - totalP / 2) - pSize / 2;
                 if (vertical ? !reverse : reverse) p = pSpace - p - pSize;
-                float q = crossLow ? rowPosition : qSpace - rowQ - rowPosition + rowQ - qSize;
-                cell.rect.set(area.x + (vertical ? q : p), area.y + (vertical ? p : q),
-                    vertical ? qSize : pSize, vertical ? pSize : qSize);
-                float iconSize = Math.min(cell.iconSize, Math.min(cell.rect.width, cell.rect.height));
-                cell.region = unitIcon(cell.bucket.profile.uiIcon, cell.bucket.profile.fullIcon,
-                    iconSize * pixelRatio, settings.fullIcons);
-                float ratio = cell.region == null ? 1 : (float)Math.max(1, cell.region.width) / Math.max(1, cell.region.height);
-                float iw = ratio >= 1 ? iconSize : iconSize * ratio, ih = ratio >= 1 ? iconSize / ratio : iconSize;
-                cell.icon.set(cell.rect.x + cell.rect.width - iconSize / 2 - iw / 2,
-                    cell.rect.y + (cell.rect.height - ih) / 2, iw, ih);
-                cell.counterRight = cell.icon.x - currentCounterGap;
+                float q = crossLow ? rowPosition : qSpace - rowPosition - qSize;
+                cell.rect.setPosition(area.x + (vertical ? q : p), area.y + (vertical ? p : q));
+                cell.icon.setPosition(cell.rect.x + cell.rect.width - cell.icon.width,
+                    cell.rect.y + (cell.rect.height - cell.icon.height) / 2);
+                cell.counterRight = cell.rect.x + cell.countWidth - cell.countRightInset;
                 cursor += pSize + typeGap;
             }
             rowCursor += rowQ + tierGap; start = end;
         }
     }
 
-    private int tierEnd(Box box, int start) {
-        int end = start + 1;
-        while (end < box.cellCount && box.cells[end].bucket.profile.tier == box.cells[start].bucket.profile.tier) end++;
-        return end;
+    /** One affine contraction preserves all centre-distance ratios. Translation remains free, so a single
+     * full-width block cannot force every other centre to collapse onto it. No per-cell clamping is needed. */
+    private void fitAxis(Box box, int start, int end, float total, float space, boolean across) {
+        float first = across ? box.cells[start].tierCross : placedP(box.cells[start]);
+        float last = across ? box.cells[box.lastTier].tierCross : placedP(box.cells[end - 1]);
+        float centreSpan = total - (first + last) / 2;
+        float high = centreSpan > 0 ? Math.min(1, Math.max(0, space - (first + last) / 2) / centreSpan) : 1;
+        axisCompression = 0; axisCenter = space / 2;
+        // The end blocks give an upper bound, usually feasible without a search.
+        if (tryAxis(box, start, end, total, space, across, high)) return;
+        float low = 0;
+        // This bounds positional uncertainty by space/65536, independent of the uncompressed span.
+        for (int iteration = 0; iteration < 16; iteration++) {
+            float candidate = (low + high) / 2;
+            if (tryAxis(box, start, end, total, space, across, candidate)) low = candidate;
+            else high = candidate;
+        }
     }
-    private float cellP(Cell cell) { return vertical ? cell.naturalHeight : cell.naturalWidth; }
-    private float cellQ(Cell cell) { return vertical ? cell.naturalWidth : cell.naturalHeight; }
+
+    private boolean tryAxis(Box box, int start, int end, float total, float space, boolean across, float factor) {
+        float low = Float.NEGATIVE_INFINITY, high = Float.POSITIVE_INFINITY, cursor = 0;
+        for (int i = start; i < end;) {
+            Cell cell = box.cells[i]; float size = across ? cell.tierCross : placedP(cell);
+            float offset = factor * (cursor + size / 2 - total / 2);
+            low = Math.max(low, size / 2 - offset); high = Math.min(high, space - size / 2 - offset);
+            cursor += size + (across ? tierGap : typeGap); i = across ? cell.tierEnd : i + 1;
+        }
+        if (low > high) return false;
+        axisCompression = factor; axisCenter = (low + high) / 2;
+        return true;
+    }
+    private static void sizeIcon(Cell cell, float size) {
+        float ratio = cell.region == null ? 1 : (float)Math.max(1, cell.region.width) / Math.max(1, cell.region.height);
+        cell.icon.setSize(ratio >= 1 ? size : size * ratio, ratio >= 1 ? size / ratio : size);
+    }
+    private float placedP(Cell cell) { return vertical ? cell.rect.height : cell.rect.width; }
+    private float placedQ(Cell cell) { return vertical ? cell.rect.width : cell.rect.height; }
     private float outerCross(float size) { return crossLow ? breadth - size : 0; }
     private void place(Rect out, float p, float q, float dp, float dq) {
         if (vertical) out.set(q, reverse ? p : length - p - dp, dq, dp);

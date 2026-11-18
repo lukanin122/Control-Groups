@@ -61,7 +61,8 @@ public final class SmokeLauncher extends DesktopLauncher {
                 ClassLoader bridge = new URLClassLoader(new URL[]{code}, actor.getClass().getClassLoader()) {
                     @Override
                     protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-                        if (!name.equals("controlgroups.SmokeScenario") && !name.startsWith("controlgroups.SmokeScenario$")) return super.loadClass(name, resolve);
+                        if (!name.equals("controlgroups.SmokeScenario") && !name.startsWith("controlgroups.SmokeScenario$") &&
+                            !name.startsWith("controlgroups.SmokeProjectionComparison")) return super.loadClass(name, resolve);
                         Class<?> type = findLoadedClass(name);
                         if (type == null) type = findClass(name);
                         if (resolve) resolveClass(type);
