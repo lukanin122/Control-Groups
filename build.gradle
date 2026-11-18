@@ -83,6 +83,14 @@ tasks.register('benchmark', JavaExec) {
     mainClass = 'controlgroups.CoreBenchmark'
 }
 
+tasks.register('projectionBenchmark', JavaExec) {
+    group = 'verification'
+    description = 'Prepared projection CPU/allocation check without OpenGL; not game frame time.'
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'controlgroups.ProjectionBenchmark'
+}
+
 // Optional real SDL/OpenGL check against a locally installed desktop distribution.
 sourceSets {
     smoke {

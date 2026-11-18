@@ -40,7 +40,7 @@ public final class GroupsHud extends Element {
     public final UnitProfiles profiles;
     public final GroupModel model;
     public final HudLayout layout;
-    private final UnitProjection projection = new UnitProjection();
+    private final UnitProjection projection;
     private final TextureRegion settingsIcon = Icon.settings.getRegion();
     private final TextureRegion[] activityIcons = new TextureRegion[Activity.values().length];
     private final IntFunction<Unit> resolve = id -> Groups.unit.getByID(id);
@@ -71,6 +71,7 @@ public final class GroupsHud extends Element {
         name = "control-groups-hud";
         settings = new ModSettings(Core.settings);
         profiles = new UnitProfiles(Core.settings, Vars.content.units(), Vars.content.blocks());
+        projection = new UnitProjection(profiles);
         settings.initializeLargest(profiles.largestHitSize);
         model = new GroupModel(profiles, Vars.content.units());
         layout = new HudLayout(model, this::measureCounter);

@@ -114,7 +114,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
                     measureProjectionFill();
                     verifyProjectionFitting();
                     verifyRealCellPacking();
-                    SmokeProjectionComparison.run(reports);
+                    SmokeProjectionComparison.run(reports, hud.profiles);
                     Core.graphics.setWindowSize(640, 480);
                     hud.toggleEditor(); stage++; frames = 0;
                 }
@@ -590,7 +590,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         var settings = new ModSettings(new arc.Settings());
         settings.advanced = true; settings.occupancy = 1;
         var layout = new HudLayout(model);
-        var renderer = new UnitProjection();
+        var renderer = new UnitProjection(hud.profiles);
         IntSeq[] groups = new IntSeq[10];
         ProjectionProbe probe = new ProjectionProbe(sourceHulls);
         Batch original = Core.batch;
@@ -870,7 +870,7 @@ public final class SmokeScenario implements java.util.function.LongConsumer {
         StringBuilder report = new StringBuilder("type,advanced,prepared-radius,render-visible-radius,limiting-region\n");
         StringBuilder pixels = new StringBuilder("type,advanced,pose,occupancy,body-angle,weapon-angle,warmup,recoil,gait,Z,tracking-span,P,width,height,min-clearance,outside-pixels\n");
         StringBuilder timing = new StringBuilder("Real SDL/OpenGL renderer; 11 Conquer projections per batch, 1000 warmup batches, 500 measured batches.\nCPU draw+flush only, not complete GPU/frame time.\n");
-        UnitProjection renderer = new UnitProjection();
+        UnitProjection renderer = new UnitProjection(hud.profiles);
         ProjectionProbe probe = new ProjectionProbe(sourceHulls); probe.measureRadius = true;
         Batch originalBatch = Core.batch;
         Mat originalProjection = new Mat(Draw.proj()), originalTransform = new Mat(Draw.trans());

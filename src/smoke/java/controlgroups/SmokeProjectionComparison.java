@@ -18,19 +18,23 @@ import arc.math.Mat;
 import arc.util.ScreenUtils;
 import arc.util.Time;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.List;
 import mindustry.content.Blocks;
 import mindustry.content.UnitTypes;
 import mindustry.game.Team;
 import mindustry.gen.Unit;
 import mindustry.type.UnitType;
 
-/** Investigation only: invoke vanilla drawing in the disposable test world, never in the production HUD. */
+/** Native color/layer oracle in the disposable test world, never in the production HUD. */
 public final class SmokeProjectionComparison {
     private static final int SIZE = 768;
 
-    public static void run(Fi reports) {
+    public static void run(Fi reports, UnitProfiles profiles) {
         FrameBuffer buffer = new FrameBuffer(SIZE, SIZE);
-        UnitProjection projection = new UnitProjection();
+        UnitProjection projection = new UnitProjection(profiles);
         Trace trace = new Trace();
         Batch originalBatch = Core.batch;
         Mat originalProjection = new Mat(Draw.proj()), originalTransform = new Mat(Draw.trans());
@@ -41,6 +45,7 @@ public final class SmokeProjectionComparison {
         var blend = Draw.getBlend(); var shader = Draw.getShader();
         StringBuilder result = new StringBuilder("type,state,mode,opaque,red,yellow,common-pixels,mean-rgb-error-vs-sorted\n");
         StringBuilder commands = new StringBuilder("type,state,mode,region,tint,mix,blend,z\n");
+        int checked = 0;
         Draw.flush();
         try {
             Time.time = 3.1415927f;
@@ -51,14 +56,17 @@ public final class SmokeProjectionComparison {
                     for (int state = 0; state < 7; state++) {
                         pose(unit, state);
                         Pixmap[] images = new Pixmap[3];
+                        List<Stamp> nativeCommands = null;
                         int left = SIZE, bottom = SIZE, right = -1, top = -1;
                         try {
                             for (int mode = 0; mode < 3; mode++) {
                                 unit.shadowAlpha = 1;
                                 Core.batch = trace; trace.prefix = type.name + ',' + state + ',' + (mode == 2 ? "projection" : "native");
-                                trace.output = commands;
+                                trace.output = commands; trace.commands.clear();
                                 if (mode == 2) projection.draw(unit, 0, SIZE / 2f, SIZE / 2f, type.hitSize * 3, 0, type.hitSize, 10, true, 1);
                                 else if (mode == 0) type.draw(unit);
+                                if (mode == 0) nativeCommands = new ArrayList<>(trace.commands);
+                                if (mode == 2) checked += verifyCommands(nativeCommands, trace.commands, 1, unit, type.name + '/' + state);
                                 Core.batch = originalBatch;
                                 buffer.begin(Color.clear);
                                 try {
@@ -68,6 +76,12 @@ public final class SmokeProjectionComparison {
                                     Draw.sort(mode == 0);
                                     if (mode == 2) projection.draw(unit, 0, SIZE / 2f, SIZE / 2f, type.hitSize * 3, 0, type.hitSize, 10, true, 1);
                                     else type.draw(unit);
+                                    if (mode == 0) {
+                                        // Renderer queues normal overlay/space callbacks after units. Without a tail
+                                        // request, Arc flushRequests restores normal BEFORE its final additive buffer
+                                        // is submitted, changing the isolated reference's actual pixel colors.
+                                        Draw.blend(Blending.normal); Draw.draw(mindustry.graphics.Layer.end, () -> { });
+                                    }
                                     Draw.flush(); Draw.sort(false);
                                     images[mode] = ScreenUtils.getFrameBufferPixmap(0, 0, SIZE, SIZE);
                                 } finally { Draw.sort(false); buffer.end(); }
@@ -91,9 +105,15 @@ public final class SmokeProjectionComparison {
                                     }
                                 }
                                 require(opaque > 0, "Empty colour reference: " + type.name + '/' + state + '/' + mode);
+                                double meanError = common == 0 ? 0 : error / (3d * common);
+                                if (mode == 2 && state < 6) {
+                                    if (type == UnitTypes.conquer) require(meanError < 6, "Conquer pixel composition diverged: " + state + '/' + meanError);
+                                    if (type == UnitTypes.oct || type == UnitTypes.eclipse)
+                                        require(meanError < 1, "Body color diverged: " + type.name + '/' + state + '/' + meanError);
+                                }
                                 result.append(String.format(Locale.ROOT, "%s,%d,%s,%d,%d,%d,%d,%.3f%n", type.name, state,
                                     mode == 0 ? "native-sorted" : mode == 1 ? "native-immediate" : "projection", opaque, red, yellow, common,
-                                    common == 0 ? 0 : error / (3d * common)));
+                                    meanError));
                             }
                             if (state == 0 || state == 2 || state == 4) {
                                 left = Math.max(0, left - 12); bottom = Math.max(0, bottom - 12);
@@ -107,6 +127,14 @@ public final class SmokeProjectionComparison {
                             }
                         } finally { for (Pixmap image : images) if (image != null) image.dispose(); }
                     }
+                    // Live colors may change without rebuilding metadata; use the same prepared plan.
+                    pose(unit, 1); unit.team = Team.crux; unit.hitTime = .25f; unit.healTime = .7f;
+                    Core.batch = trace; trace.output = new StringBuilder(); trace.prefix = type.name + ",alpha";
+                    trace.commands.clear(); type.draw(unit); List<Stamp> reference = new ArrayList<>(trace.commands);
+                    trace.commands.clear();
+                    projection.draw(unit, 0, 0, 0, type.hitSize, 0, type.hitSize, 0, true, .32f);
+                    checked += verifyCommands(reference, trace.commands, .32f, unit, type.name + "/alpha-team");
+                    Core.batch = originalBatch;
                 } finally { unit.remove(); }
             }
             require(Core.gl.glGetError() == 0, "OpenGL error in native/projection comparison");
@@ -119,6 +147,8 @@ public final class SmokeProjectionComparison {
         }
         reports.child("projection-colors.csv").writeString(result.toString());
         reports.child("projection-color-commands.csv").writeString(commands.toString());
+        reports.child("projection-color-parity.txt").writeString(checked + " source-native sprite operations: stable layer order, RGB/alpha/mix/blend PASS.\n" +
+            "Five real types, seven states, two teams, HUD alpha 1 and .32. Engine geometry and optional status indicators intentionally unchanged.\n");
     }
 
     private static void pose(Unit unit, int state) {
@@ -137,14 +167,50 @@ public final class SmokeProjectionComparison {
     private static final class Trace extends SpriteBatch {
         StringBuilder output;
         String prefix;
+        final List<Stamp> commands = new ArrayList<>();
         Trace() { super(0); }
         @Override protected void draw(TextureRegion region, float x, float y, float ox, float oy, float w, float h, float rotation) {
+            commands.add(new Stamp(region, Draw.getColorPacked(), Draw.getMixColorPacked(), Draw.getBlend(), Draw.z()));
             output.append(prefix).append(',').append(region instanceof AtlasRegion named ? named.name : "quad")
                 .append(',').append(Draw.getColor()).append(',').append(Draw.getMixColor())
                 .append(',').append(Draw.getBlend() == Blending.additive ? "additive" : "normal").append(',').append(Draw.z()).append('\n');
         }
         @Override protected void draw(Texture texture, float[] vertices, int offset, int count) { }
         @Override protected void flush() { }
+    }
+
+    private record Stamp(TextureRegion region, float color, float mix, Blending blend, float z) { }
+
+    private static int verifyCommands(List<Stamp> nativeCommands, List<Stamp> projection, float alpha, Unit unit, String context) {
+        var regions = new HashSet<TextureRegion>();
+        for (Stamp command : projection) regions.add(command.region);
+        var expected = new ArrayList<Stamp>();
+        float engineZ = unit.type.engineLayer > 0 ? unit.type.engineLayer : unit.elevation > .5f ? unit.type.flyingLayer :
+            unit.type.groundLayer + Math.max(0, Math.min(.01f, unit.type.hitSize / 4000f));
+        for (Stamp command : nativeCommands) if (regions.contains(command.region)) {
+            // SuppressionFieldAbility also draws the shared circle texture, on its own effect layer.
+            // Keep native abilities in the pixel comparison, exclude them from supported-engine command parity.
+            if (command.region instanceof AtlasRegion named && named.name.equals("circle") && command.z != engineZ) continue;
+            expected.add(command);
+        }
+        expected.sort(Comparator.comparingInt(command -> Float.floatToRawIntBits(command.z + 16f)));
+        require(expected.size() == projection.size(), context + ": sprite count " + expected.size() + " vs " + projection.size());
+        Color a = new Color(), b = new Color();
+        for (int i = 0; i < expected.size(); i++) {
+            Stamp source = expected.get(i), actual = projection.get(i);
+            String label = context + '/' + i + '/' + (actual.region instanceof AtlasRegion named ? named.name : "quad");
+            require(source.region == actual.region, label + ": incorrect stable layer order, expected " + source.region);
+            require(source.blend == actual.blend, label + ": blending differs");
+            a.abgr8888(source.color); b.abgr8888(actual.color);
+            require(Math.abs(a.r - b.r) < .009 && Math.abs(a.g - b.g) < .009 && Math.abs(a.b - b.b) < .009 &&
+                Math.abs(a.a * alpha - b.a) < .009, label + ": color " + a + " vs " + b);
+            a.abgr8888(source.mix); b.abgr8888(actual.mix);
+            // RGB is immaterial when the mix is fully transparent; native reset uses zero, applyColor may use white.
+            require(Math.abs(a.a - b.a) < .009 && (a.a < .009 && b.a < .009 ||
+                Math.abs(a.r - b.r) < .009 && Math.abs(a.g - b.g) < .009 && Math.abs(a.b - b.b) < .009),
+                label + ": mix " + a + " vs " + b);
+        }
+        return expected.size();
     }
 
     private static void require(boolean condition, String message) { if (!condition) throw new AssertionError(message); }

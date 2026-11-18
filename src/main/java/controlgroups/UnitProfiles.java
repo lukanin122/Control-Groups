@@ -40,6 +40,7 @@ public final class UnitProfiles {
         public boolean defaultBanned;
         public TextureRegion uiIcon, fullIcon;
         public double projectionRadius, advancedProjectionRadius, fallbackRadiusRatio;
+        final ProjectionPlan projectionPlan;
 
         private Profile(UnitType unit, ProjectionBounds bounds) {
             this.unit = unit;
@@ -47,6 +48,7 @@ public final class UnitProfiles {
             projectionRadius = bounds.radius(unit, false);
             advancedProjectionRadius = bounds.radius(unit, true);
             fallbackRadiusRatio = bounds.fallbackRadius(unit);
+            projectionPlan = new ProjectionPlan(unit);
         }
     }
 
