@@ -1,0 +1,2 @@
+727 source-native sprite operations: stable layer order, RGB/alpha/mix/blend PASS.
+Five real types, seven states, two teams, HUD alpha 1 and .32. Engine geometry and optional status indicators intentionally unchanged.

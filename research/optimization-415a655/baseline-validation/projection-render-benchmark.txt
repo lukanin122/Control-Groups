@@ -1,0 +1,4 @@
+Real SDL/OpenGL renderer; 11 Conquer projections per batch, 1000 warmup batches, 500 measured batches.
+CPU draw+flush only, not complete GPU/frame time.
+advanced=false median/p95 42.2/102.5 us per 11 projections
+advanced=true median/p95 655.7/1836.3 us per 11 projections

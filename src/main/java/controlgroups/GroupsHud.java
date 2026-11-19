@@ -273,7 +273,7 @@ public final class GroupsHud extends Element {
                         for (int i = start; i < end; i++) drawCell(box.cells[i], alpha * box.expansion);
                         end = start;
                     }
-                } finally { Draw.flush(); clipEnd(); }
+                } finally { clipEnd(); } // ScissorStack.pop flushes before changing the clip.
             }
         }
         if (settings.projection && box.projection.width > 0 && box.group.representative != null) {

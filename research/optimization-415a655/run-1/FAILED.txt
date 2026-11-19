@@ -1,0 +1,8 @@
+java.lang.IllegalStateException: Array is empty.
+	at arc.struct.Seq.first(Seq.java:792)
+	at controlgroups.OptimizationResearch.accept(OptimizationResearch.java:55)
+	at controlgroups.ResearchLauncher.update(ResearchLauncher.java:40)
+	at arc.backend.sdl.SdlApplication.listen(SdlApplication.java:229)
+	at arc.backend.sdl.SdlApplication.loop(SdlApplication.java:217)
+	at arc.backend.sdl.SdlApplication.<init>(SdlApplication.java:58)
+	at controlgroups.ResearchLauncher.main(ResearchLauncher.java:27)

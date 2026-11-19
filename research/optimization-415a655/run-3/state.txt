@@ -1,0 +1,1 @@
+Scoped dual HUD: color/mix, shader, matrices, scale, Z, stroke, blending and nondefault color mask restored; representative position/health/heat unchanged; GL error=0.

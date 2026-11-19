@@ -1,0 +1,15 @@
+{
+  "OS": "Windows 10 x64 10.0.19045",
+  "CPU": "Intel Core i5-6200U",
+  "physical_cores": 2,
+  "logical_processors": 4,
+  "physical_memory_bytes": 4185997312,
+  "power_plan": "High",
+  "GPU": "Intel HD Graphics 520",
+  "driver": "31.0.101.2111",
+  "OpenGL": "4.6 compatibility",
+  "Core.gl30": false,
+  "Java": "17.0.15",
+  "SDL": "2.32.8",
+  "temperature_clock_paging_background_energy_controlled": false
+}

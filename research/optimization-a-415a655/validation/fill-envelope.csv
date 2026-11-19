@@ -1,0 +1,11 @@
+type,advanced,prepared-radius,render-visible-radius,limiting-region
+conquer,false,37.8556,37.8555,conquer-weapon-outline
+conquer,true,38.2270,37.8555,conquer-weapon-outline
+oct,false,47.6081,47.6081,oct
+oct,true,54.0312,53.5836,circle
+dagger,false,9.4458,8.8547,dagger-leg
+dagger,true,9.4458,8.8547,dagger-leg
+reign,false,35.0561,32.3180,reign-weapon-outline
+reign,true,35.0561,32.3180,reign-weapon-outline
+toxopid,false,150.6257,150.5253,toxopid-foot
+toxopid,true,150.6257,150.5253,toxopid-foot

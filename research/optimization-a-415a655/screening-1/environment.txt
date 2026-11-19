@@ -1,0 +1,6 @@
+Baseline=415a6552eb0cc3d9cdff4a59d164b98f98049a47
+Java=17.0.15
+GL=4.6.0 - Build 31.0.101.2111
+Renderer=Intel(R) HD Graphics 520
+Core.gl30=false
+Screening=true

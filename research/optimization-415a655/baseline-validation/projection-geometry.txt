@@ -1,0 +1,7 @@
+28512 real-asset vertex cases PASS; 3 transparent framebuffer pixel bounds PASS.
+Types: dagger 8, conquer 46, oct 66; 1/10 groups, all orientations/modes, internal/external,
+square off/on, K=0/.2/1, occupancy 100%, 320x240@.75 and 1920x1080@2,
+0/45 degrees, full diagonal drift, weapon states; raster check at default occupancy 100%.
+Independent group maxima/areas/safety and shared override: PASS.
+Manual Hmax, resize and 300% occupancy deliberately overflow without changing HUD/interaction bounds: PASS.
+Raster fixture: automatic Hmax 66.0, Z 166.00, safety R 1.904, P(8/46/66) 35.59/69.40/87.19 UI pixels.

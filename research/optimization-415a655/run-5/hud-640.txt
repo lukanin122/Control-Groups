@@ -1,0 +1,1 @@
+48 configurations; 4 orientations, UI .75/1/2, 1/10 saved + unassigned, internal/external, mixed distribution, fractional position, editor, partial collapse, 0/100/300% occupancy. Safe clips elided cumulative=0

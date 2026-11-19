@@ -1,0 +1,9 @@
+case,block,ns-per-iteration
+sum-control,0,5.416
+empty-flush,1,10.719
+empty-flush,2,11.866
+sum-control,3,3.663
+sum-control,4,6.027
+empty-flush,5,11.349
+empty-flush,6,11.109
+sum-control,7,3.895

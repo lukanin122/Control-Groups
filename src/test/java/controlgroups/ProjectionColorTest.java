@@ -4,6 +4,7 @@ import arc.Core;
 import arc.Settings;
 import arc.graphics.Blending;
 import arc.graphics.Color;
+import arc.graphics.Gl;
 import arc.graphics.Texture;
 import arc.graphics.g2d.Batch;
 import arc.graphics.g2d.Draw;
@@ -180,6 +181,44 @@ public class ProjectionColorTest {
                 if (commands[i].region == second.regions[0]) b = i;
             }
             assertTrue(a >= 0 && b > a);
+        }
+    }
+
+    @Test public void zeroAlphaAndLiveCustomBlendingKeepTheNativeOperationStream() {
+        try (Fixture f = new Fixture()) {
+            f.parent.color = new Color(.8f, .3f, .1f, 0);
+            f.parent.colorTo = null;
+            f.parent.heatColor.a = 0;
+            // Blending is live data, including after the plan was prepared. Zero-alpha operations
+            // can still affect custom shaders, stencil, or nonstandard blend equations.
+            for (Blending blending : new Blending[]{Blending.normal, Blending.additive,
+                new Blending(Gl.one, Gl.one), Blending.disabled}) {
+                f.parent.blending = blending;
+                for (float alpha : new float[]{1, .32f}) f.compare(alpha);
+            }
+            f.parent.color.a = .00001f;
+            f.compare(1);
+        }
+    }
+
+    @Test public void liveAliasedHeatColorAndMissingMirrorBasePreserveNativeInheritance() {
+        try (Fixture f = new Fixture()) {
+            Core.atlas.addRegion("error", Fixture.region()); Core.atlas.setErrorRegion("error");
+            f.parent.regions = new TextureRegion[]{Fixture.region(), Core.atlas.find("error")};
+            f.parent.outlines = new TextureRegion[]{Fixture.region(), Fixture.region()};
+            f.parent.color = new Color(.2f, .6f, .8f, .4f);
+            f.parent.colorTo = new Color(.9f, .3f, .1f, .7f);
+            f.parent.heatColor = f.parent.color;
+            f.parent.mixColor = new Color(.7f, .2f, .3f, .1f);
+            f.parent.mixColorTo = new Color(.1f, .8f, .5f, .7f);
+            f.rebuild();
+            for (float heatAlpha : new float[]{0, .00001f, .25f, 1}) {
+                f.parent.heatColor.a = heatAlpha;
+                for (float progress : new float[]{0, .5f, 1}) {
+                    f.unit.mounts[0].heat = f.unit.mounts[0].warmup = progress;
+                    f.compare(.32f);
+                }
+            }
         }
     }
 

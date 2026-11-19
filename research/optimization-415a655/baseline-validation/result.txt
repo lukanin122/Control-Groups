@@ -1,0 +1,18 @@
+Mindustry 160.7, OpenGL 4.6.0 / Intel / Intel(R) HD Graphics 520 / 4.6.0 - Build 31.0.101.2111
+Actual hidden SDL/OpenGL client, 1000 initially spawned units; no movement/combat orders, physics enabled.
+Baseline update+render median/p95: 14.914/26.699 ms
+HUD update+render median/p95: 9.789/17.326 ms
+Selection: group single/double, type, projection PASS
+Hide/resume without hidden scans: PASS
+Editor move/clamp, edge resize, field focus/keyboard input/reset: PASS
+Building selection/native input/block placement prevention: PASS
+Telemetry off/on/off, reset buttons and native translucent tooltips: PASS
+Editor visual controls, fixed toolbar, hierarchy, columns and complete yellow settings border: PASS
+Geometry edits reuse game data; detailed icon threshold/fallback: PASS
+Internal projection/OpenGL and actual 640x480/320x240 windows: PASS
+Fitted projection real-asset vertices and transparent framebuffer pixels: PASS
+All unit rows, avatar bans, ban/unban and per-type resets: PASS
+Unit color field width/tint: PASS
+World reset: PASS
+Renderer state restore: PASS
+This is an automated sandbox run, not a multiplayer or interactive gameplay test.

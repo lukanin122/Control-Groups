@@ -1,0 +1,1 @@
+Scoped dual HUD: color/mix, shader/program, matrices, scale, Z, stroke, blending factors/equations/enabled, FBO, viewport, parent scissor and nondefault color mask restored. 55 fixture units and all mount state snapshots unchanged; GL error=0.

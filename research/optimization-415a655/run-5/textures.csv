@@ -1,0 +1,7 @@
+groups,variant,gl-draws,texture-binds,blend-functions
+1,stock,7,4,4
+1,skip,7,4,4
+1,skip+dual,5,4,1
+11,stock,77,44,44
+11,skip,77,44,44
+11,skip+dual,45,44,1

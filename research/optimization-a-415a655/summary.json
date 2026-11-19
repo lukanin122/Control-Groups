@@ -1,0 +1,476 @@
+{
+  "screening-1": {
+    "quality": [
+      {
+        "scope": "HUD-1280",
+        "variant": "color-hoist+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-1280",
+        "variant": "heat-hoist+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-320",
+        "variant": "color-hoist+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-320",
+        "variant": "heat-hoist+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-640",
+        "variant": "color-hoist+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-640",
+        "variant": "heat-hoist+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-additive",
+        "variant": "color-hoist",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-additive",
+        "variant": "heat-hoist",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-additive",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-disabled",
+        "variant": "color-hoist",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-disabled",
+        "variant": "heat-hoist",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-disabled",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-normal",
+        "variant": "color-hoist",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-normal",
+        "variant": "heat-hoist",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-normal",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-one-one",
+        "variant": "color-hoist",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-one-one",
+        "variant": "heat-hoist",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-one-one",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "projection",
+        "variant": "color-hoist",
+        "cases": 480,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "projection",
+        "variant": "heat-hoist",
+        "cases": 480,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      }
+    ]
+  },
+  "final-1": {
+    "quality": [
+      {
+        "scope": "HUD-1280",
+        "variant": "production+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-320",
+        "variant": "production+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-640",
+        "variant": "production+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-blend-MAX",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-blend-MAX",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 1,
+        "max_rgb": 153,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-blend-MIN",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-blend-MIN",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-shader-ignores-alpha",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-shader-ignores-alpha",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 1,
+        "max_rgb": 203,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-additive",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-disabled",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-normal",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-one-one",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "parent-clip",
+        "variant": "production+E",
+        "cases": 18,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "projection",
+        "variant": "production",
+        "cases": 480,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      }
+    ]
+  },
+  "final-2": {
+    "quality": [
+      {
+        "scope": "HUD-1280",
+        "variant": "production+E",
+        "cases": 144,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-320",
+        "variant": "production+E",
+        "cases": 144,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-640",
+        "variant": "production+E",
+        "cases": 144,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-blend-MAX",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-blend-MAX",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 1,
+        "max_rgb": 153,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-blend-MIN",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-blend-MIN",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-shader-ignores-alpha",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "caller-shader-ignores-alpha",
+        "variant": "raw-alpha-skip",
+        "cases": 1,
+        "different": 1,
+        "max_rgb": 203,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-additive",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-disabled",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-normal",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "custom-blend-one-one",
+        "variant": "production",
+        "cases": 1,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "parent-clip",
+        "variant": "production+E",
+        "cases": 144,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "projection",
+        "variant": "production",
+        "cases": 480,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      }
+    ],
+    "ordered_clip_cases": 144,
+    "ordered_clip_failures": 0
+  },
+  "clipping-1": {
+    "quality": [
+      {
+        "scope": "HUD-1280",
+        "variant": "production+E",
+        "cases": 144,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-320",
+        "variant": "production+E",
+        "cases": 144,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "HUD-640",
+        "variant": "production+E",
+        "cases": 144,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "parent-clip",
+        "variant": "production+E",
+        "cases": 144,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      }
+    ],
+    "ordered_clip_cases": 144,
+    "ordered_clip_failures": 0
+  },
+  "native-1": {
+    "quality": [
+      {
+        "scope": "HUD-1280",
+        "variant": "production+E",
+        "cases": 144,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      },
+      {
+        "scope": "parent-clip",
+        "variant": "production+E",
+        "cases": 48,
+        "different": 0,
+        "max_rgb": 0,
+        "max_alpha": 0
+      }
+    ],
+    "ordered_clip_cases": 48,
+    "ordered_clip_failures": 0
+  }
+}

@@ -1,0 +1,82 @@
+[
+  {
+    "name": "controlgroups.BanTest",
+    "tests": "3",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "1.269"
+  },
+  {
+    "name": "controlgroups.CellPackingTest",
+    "tests": "6",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.139"
+  },
+  {
+    "name": "controlgroups.GroupModelTest",
+    "tests": "9",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.171"
+  },
+  {
+    "name": "controlgroups.HudLayoutTest",
+    "tests": "5",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.019"
+  },
+  {
+    "name": "controlgroups.ProjectionBoundsTest",
+    "tests": "9",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.05"
+  },
+  {
+    "name": "controlgroups.ProjectionColorTest",
+    "tests": "12",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.569"
+  },
+  {
+    "name": "controlgroups.ProjectionFittingTest",
+    "tests": "10",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.23"
+  },
+  {
+    "name": "controlgroups.SettingsTest",
+    "tests": "7",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.106"
+  },
+  {
+    "name": "controlgroups.SpaceAllocationTest",
+    "tests": "7",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.761"
+  },
+  {
+    "name": "controlgroups.TelemetryTest",
+    "tests": "1",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.001"
+  }
+]
